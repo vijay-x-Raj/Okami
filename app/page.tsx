@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { MediaType, OkamiMedia } from "./lib/jikan";
+import { fetchDetail, fetchSeason, fetchTop, searchMedia } from "./lib/api";
+import { type OkamiEntry, type OkamiStatus, readEntries, upsertEntry, writeEntries } from "./lib/storage";
 
 const navItems = [
   {
@@ -39,332 +42,73 @@ const navItems = [
   },
 ];
 
-const libraryCards = [
-  {
-    title: "Neon Genesis Evangelion",
-    year: 1995,
-    format: "TV Series",
-    score: "9.5",
-    statusLabel: "Completed",
-    statusClass: "completed",
-    cover: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=300&q=80",
-  },
-  {
-    title: "Berserk",
-    year: 1997,
-    format: "Manga",
-    score: "9.8",
-    statusLabel: "Watching",
-    statusClass: "watching",
-    cover: "https://images.unsplash.com/photo-1541701494587-cb58502866ab?w=300&q=80",
-  },
-  {
-    title: "Vinland Saga",
-    year: 2019,
-    format: "TV Series",
-    score: "8.8",
-    statusLabel: "Plan to Watch",
-    statusClass: "plan",
-    cover: "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=300&q=80",
-  },
-  {
-    title: "Ghost in the Shell",
-    year: 1995,
-    format: "Film",
-    score: "9.2",
-    statusLabel: "Completed",
-    statusClass: "completed",
-    cover: "https://images.unsplash.com/photo-1518770660439-4636190af475?w=300&q=80",
-  },
-  {
-    title: "Mushishi",
-    year: 2005,
-    format: "TV Series",
-    score: "8.7",
-    statusLabel: "On Hold",
-    statusClass: "hold",
-    cover: "https://images.unsplash.com/photo-1470813740244-df37b8c1edcb?w=300&q=80",
-  },
-  {
-    title: "Perfect Blue",
-    year: 1997,
-    format: "Film",
-    score: "9.1",
-    statusLabel: "Completed",
-    statusClass: "completed",
-    cover: "https://images.unsplash.com/photo-1485846234645-a62644f84728?w=300&q=80",
-  },
-  {
-    title: "Vagabond",
-    year: 1998,
-    format: "Manga",
-    score: "9.7",
-    statusLabel: "Watching",
-    statusClass: "watching",
-    cover: "https://images.unsplash.com/photo-1419242902214-272b3f66ee7a?w=300&q=80",
-  },
-  {
-    title: "Ping Pong the Animation",
-    year: 2014,
-    format: "TV Series",
-    score: "8.5",
-    statusLabel: "Plan to Watch",
-    statusClass: "plan",
-    cover: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&q=80",
-  },
-  {
-    title: "Monster",
-    year: 2004,
-    format: "TV Series",
-    score: "9.4",
-    statusLabel: "Completed",
-    statusClass: "completed",
-    cover: "https://images.unsplash.com/photo-1432821596592-e2c18b78144f?w=300&q=80",
-  },
-  {
-    title: "Chainsaw Man",
-    year: 2022,
-    format: "TV Series",
-    score: "8.3",
-    statusLabel: "Dropped",
-    statusClass: "dropped",
-    cover: "https://images.unsplash.com/photo-1547036967-23d11aacaee0?w=300&q=80",
-  },
-];
-
-const libraryRows = [
-  {
-    id: "01",
-    title: "Akira",
-    type: "Film",
-    userScore: "9",
-    officialScore: "8.7",
-    status: "Completed",
-    progress: "1 / 1",
-    date: "2025-11-12",
-    cover: "https://images.unsplash.com/photo-1485846234645-a62644f84728?w=80&q=80",
-    watching: false,
-  },
-  {
-    id: "02",
-    title: "Cowboy Bebop",
-    type: "TV",
-    userScore: "10",
-    officialScore: "8.9",
-    status: "Watching",
-    progress: "9 / 26",
-    date: "2026-01-02",
-    cover: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=80&q=80",
-    watching: true,
-  },
-  {
-    id: "03",
-    title: "Pluto",
-    type: "Manga",
-    userScore: "8",
-    officialScore: "8.6",
-    status: "On Hold",
-    progress: "18 / 65",
-    date: "2025-08-19",
-    cover: "https://images.unsplash.com/photo-1541701494587-cb58502866ab?w=80&q=80",
-    watching: false,
-  },
-  {
-    id: "04",
-    title: "Paprika",
-    type: "Film",
-    userScore: "--",
-    officialScore: "8.0",
-    status: "Plan to Watch",
-    progress: "0 / 1",
-    date: "2026-02-21",
-    cover: "https://images.unsplash.com/photo-1547036967-23d11aacaee0?w=80&q=80",
-    watching: false,
-  },
-];
-
-const exploreResults = [
-  {
-    title: "Frieren: Beyond Journey's End",
-    year: 2023,
-    format: "TV Series",
-    score: "9.1",
-    cover: "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=300&q=80",
-    inLibrary: true,
-  },
-  {
-    title: "Blue Box",
-    year: 2021,
-    format: "Manga",
-    score: "8.4",
-    cover: "https://images.unsplash.com/photo-1496307042754-b4aa456c4a2d?w=300&q=80",
-    inLibrary: false,
-  },
-  {
-    title: "Kaiju No. 8",
-    year: 2020,
-    format: "Manga",
-    score: "8.2",
-    cover: "https://images.unsplash.com/photo-1470813740244-df37b8c1edcb?w=300&q=80",
-    inLibrary: false,
-  },
-  {
-    title: "The Apothecary Diaries",
-    year: 2023,
-    format: "TV Series",
-    score: "8.9",
-    cover: "https://images.unsplash.com/photo-1505678261036-a3fcc5e884ee?w=300&q=80",
-    inLibrary: true,
-  },
-  {
-    title: "Dandadan",
-    year: 2021,
-    format: "Manga",
-    score: "8.6",
-    cover: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=300&q=80",
-    inLibrary: false,
-  },
-  {
-    title: "Solo Leveling",
-    year: 2024,
-    format: "TV Series",
-    score: "8.1",
-    cover: "https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=300&q=80",
-    inLibrary: false,
-  },
-  {
-    title: "Vinland Saga",
-    year: 2019,
-    format: "TV Series",
-    score: "8.8",
-    cover: "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=300&q=80",
-    inLibrary: true,
-  },
-  {
-    title: "Witch Hat Atelier",
-    year: 2016,
-    format: "Manga",
-    score: "8.7",
-    cover: "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=300&q=80",
-    inLibrary: false,
-  },
-];
-
-const curatedStrips = [
-  {
-    title: "Top Rated This Season",
-    items: ["Frieren", "Dungeon Meshi", "Jujutsu Kaisen", "Apothecary Diaries", "Blue Box"],
-  },
-  {
-    title: "All-Time Classics",
-    items: ["Monster", "Bebop", "Akira", "Ghost in the Shell", "Mushishi"],
-  },
-  {
-    title: "Manga Essentials",
-    items: ["Berserk", "Vagabond", "Pluto", "Dandadan", "Blue Box"],
-  },
-];
-
-const myListRows = [
-  {
-    id: "01",
-    title: "Berserk",
-    type: "Manga",
-    myScore: "10",
-    officialScore: "9.2",
-    status: "Watching",
-    statusClass: "watching",
-    progress: "Ch 103 / 364",
-    date: "2026-02-01",
-    cover: "https://images.unsplash.com/photo-1541701494587-cb58502866ab?w=80&q=80",
-  },
-  {
-    id: "02",
-    title: "Neon Genesis Evangelion",
-    type: "TV",
-    myScore: "9",
-    officialScore: "8.3",
-    status: "Completed",
-    statusClass: "completed",
-    progress: "Ep 26 / 26",
-    date: "2025-10-11",
-    cover: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=80&q=80",
-  },
-  {
-    id: "03",
-    title: "Chainsaw Man",
-    type: "TV",
-    myScore: "6",
-    officialScore: "8.4",
-    status: "Dropped",
-    statusClass: "dropped",
-    progress: "Ep 5 / 12",
-    date: "2025-08-22",
-    cover: "https://images.unsplash.com/photo-1547036967-23d11aacaee0?w=80&q=80",
-  },
-  {
-    id: "04",
-    title: "Pluto",
-    type: "Manga",
-    myScore: "8",
-    officialScore: "8.6",
-    status: "On Hold",
-    statusClass: "hold",
-    progress: "Ch 18 / 65",
-    date: "2025-12-04",
-    cover: "https://images.unsplash.com/photo-1470813740244-df37b8c1edcb?w=80&q=80",
-  },
-  {
-    id: "05",
-    title: "Ping Pong the Animation",
-    type: "TV",
-    myScore: "--",
-    officialScore: "8.6",
-    status: "Plan to Watch",
-    statusClass: "plan",
-    progress: "Ep 0 / 11",
-    date: "2026-03-01",
-    cover: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&q=80",
-  },
-];
-
-const scoreDistribution = [
-  { score: 10, value: 6 },
-  { score: 9, value: 11 },
-  { score: 8, value: 9 },
-  { score: 7, value: 5 },
-  { score: 6, value: 4 },
-  { score: 5, value: 2 },
-  { score: 4, value: 1 },
-  { score: 3, value: 1 },
-  { score: 2, value: 0 },
-  { score: 1, value: 0 },
-];
-
-const profileStats = [
-  { label: "Total Entries", value: "042" },
-  { label: "Episodes Watched", value: "812" },
-  { label: "Chapters Read", value: "1,942" },
-  { label: "Days Consumed", value: "148" },
-  { label: "Favourite Genre", value: "Seinen" },
-  { label: "Mean Score", value: "8.7" },
-];
-
-const favouriteTitles = [
-  "Berserk",
-  "Monster",
-  "Vagabond",
-  "Mushishi",
-  "Evangelion",
-];
-
 const libraryFilters = {
   type: ["All", "Anime", "Manga", "Films"],
   genre: ["Action", "Sci-Fi", "Seinen", "Shonen", "Horror", "Sports", "Fantasy", "Romance"],
   status: ["Watching", "Completed", "On Hold", "Dropped", "PTW"],
 };
 
+const statusOptions: Array<{ value: OkamiStatus; label: string; className: string }> = [
+  { value: "watching", label: "Watching", className: "watching" },
+  { value: "completed", label: "Completed", className: "completed" },
+  { value: "on_hold", label: "On Hold", className: "hold" },
+  { value: "dropped", label: "Dropped", className: "dropped" },
+  { value: "plan_to_watch", label: "Plan to Watch", className: "plan" },
+];
+
+const sortOptions = ["Date Added", "Score", "Title A–Z", "Year"] as const;
+
+function useDebounce<T>(value: T, delay: number) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timeout);
+  }, [value, delay]);
+
+  return debounced;
+}
+
+function statusLabel(status: OkamiStatus) {
+  const match = statusOptions.find((option) => option.value === status);
+  return match?.label ?? "Plan to Watch";
+}
+
+function statusClass(status: OkamiStatus) {
+  const match = statusOptions.find((option) => option.value === status);
+  return match?.className ?? "plan";
+}
+
+function entryKey(entry: OkamiEntry) {
+  return `${entry.type}:${entry.id}`;
+}
+
+function mediaKey(media: OkamiMedia) {
+  return `${media.type}:${media.id}`;
+}
+
+function entryToMedia(entry: OkamiEntry): OkamiMedia {
+  return {
+    id: entry.id,
+    type: entry.type,
+    title: entry.title,
+    cover: entry.cover,
+    year: entry.year,
+    format: entry.format,
+    genres: entry.genres,
+    official_score: entry.official_score,
+    total: entry.total,
+    synopsis: entry.notes,
+  };
+}
+
+function formatScore(score: number | null | undefined) {
+  if (!score || score <= 0) return "--";
+  return score.toFixed(1);
+}
+
 function LibraryView({
+  entries,
   activeView,
   setActiveView,
   activeType,
@@ -373,7 +117,12 @@ function LibraryView({
   setActiveGenre,
   activeStatus,
   setActiveStatus,
+  sortBy,
+  setSortBy,
+  onDetail,
+  onEdit,
 }: {
+  entries: OkamiEntry[];
   activeView: "grid" | "list";
   setActiveView: (value: "grid" | "list") => void;
   activeType: string;
@@ -382,7 +131,50 @@ function LibraryView({
   setActiveGenre: (value: string) => void;
   activeStatus: string;
   setActiveStatus: (value: string) => void;
+  sortBy: (typeof sortOptions)[number];
+  setSortBy: (value: (typeof sortOptions)[number]) => void;
+  onDetail: (media: OkamiMedia) => void;
+  onEdit: (entry: OkamiEntry) => void;
 }) {
+  const filteredEntries = useMemo(() => {
+    return entries.filter((entry) => {
+      const matchesType =
+        activeType === "All" ||
+        (activeType === "Anime" && entry.type === "anime") ||
+        (activeType === "Manga" && entry.type === "manga") ||
+        (activeType === "Films" && entry.format === "Film");
+
+      const matchesGenre = entry.genres.length === 0 || entry.genres.includes(activeGenre);
+
+      const statusValue = statusOptions.find((option) => option.label === activeStatus)?.value ?? "plan_to_watch";
+      const matchesStatus = entry.status === statusValue;
+
+      return matchesType && matchesGenre && matchesStatus;
+    });
+  }, [entries, activeType, activeGenre, activeStatus]);
+
+  const sortedEntries = useMemo(() => {
+    const next = [...filteredEntries];
+    switch (sortBy) {
+      case "Score":
+        next.sort(
+          (a, b) =>
+            (b.user_score ?? b.official_score ?? 0) -
+            (a.user_score ?? a.official_score ?? 0)
+        );
+        break;
+      case "Title A–Z":
+        next.sort((a, b) => a.title.localeCompare(b.title));
+        break;
+      case "Year":
+        next.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+        break;
+      default:
+        next.sort((a, b) => new Date(b.date_added).getTime() - new Date(a.date_added).getTime());
+    }
+    return next;
+  }, [filteredEntries, sortBy]);
+
   return (
     <>
       <div className="page-header">
@@ -472,46 +264,56 @@ function LibraryView({
 
         <div className="sort-section">
           <span className="sort-label">Sort</span>
-          <select className="sort-select" aria-label="Sort entries">
-            <option>Date Added</option>
-            <option>Score</option>
-            <option>Title A–Z</option>
-            <option>Year</option>
+          <select
+            className="sort-select"
+            aria-label="Sort entries"
+            value={sortBy}
+            onChange={(event) => setSortBy(event.target.value as (typeof sortOptions)[number])}
+          >
+            {sortOptions.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
           </select>
         </div>
       </div>
 
       <div className="count-row">
         <span className="count-label">Entries</span>
-        <span className="count-num">042</span>
+        <span className="count-num">{String(entries.length).padStart(3, "0")}</span>
         <span className="count-label" style={{ marginLeft: 16 }}>
           Showing
         </span>
-        <span className="count-num">{String(libraryCards.length).padStart(2, "0")}</span>
+        <span className="count-num">{String(sortedEntries.length).padStart(2, "0")}</span>
       </div>
 
-      {activeView === "grid" ? (
+      {entries.length === 0 ? (
+        <div className="empty-state">No entries yet. Add titles from Explore.</div>
+      ) : sortedEntries.length === 0 ? (
+        <div className="empty-state">No entries match this filter.</div>
+      ) : activeView === "grid" ? (
         <div className="grid library-grid">
-          {libraryCards.map((card) => (
-            <article className="card" key={`${card.title}-${card.year}`}>
+          {sortedEntries.map((entry) => (
+            <article className="card" key={entryKey(entry)}>
               <div className="card-img-wrap">
-                <img className="card-img" src={card.cover} alt={card.title} />
+                <img className="card-img" src={entry.cover} alt={entry.title} />
                 <div className="card-img-overlay" />
                 <div className="card-actions">
-                  <button className="card-action-btn" type="button">
+                  <button className="card-action-btn" type="button" onClick={() => onEdit(entry)}>
                     Update
                   </button>
-                  <button className="card-action-btn" type="button">
+                  <button className="card-action-btn" type="button" onClick={() => onDetail(entryToMedia(entry))}>
                     Detail
                   </button>
                 </div>
-                <div className={`score-badge ${Number(card.score) >= 9 ? "gold" : ""}`}>{card.score}</div>
-                <div className={`status-badge ${card.statusClass}`}>{card.statusLabel}</div>
+                <div className={`score-badge ${entry.official_score >= 9 ? "gold" : ""}`}>
+                  {formatScore(entry.official_score)}
+                </div>
+                <div className={`status-badge ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</div>
               </div>
               <div className="card-info">
-                <div className="card-title">{card.title}</div>
+                <div className="card-title">{entry.title}</div>
                 <div className="card-meta">
-                  <span>{card.year}</span> • {card.format}
+                  <span>{entry.year || "--"}</span> • {entry.format}
                 </div>
               </div>
             </article>
@@ -531,21 +333,23 @@ function LibraryView({
             <span>Date Added</span>
             <span>Action</span>
           </div>
-          {libraryRows.map((row, index) => (
+          {sortedEntries.map((entry, index) => (
             <div
-              key={row.id}
-              className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${row.watching ? "row-watching" : ""}`}
+              key={entryKey(entry)}
+              className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${entry.status === "watching" ? "row-watching" : ""}`}
             >
-              <span className="mono">{row.id}</span>
-              <img className="row-cover" src={row.cover} alt={row.title} />
-              <span className="title-cell">{row.title}</span>
-              <span className="mono">{row.type}</span>
-              <span className="mono">{row.userScore}</span>
-              <span className="mono">{row.officialScore}</span>
-              <span className={`status-chip ${row.status.replace(/\s+/g, "-").toLowerCase()}`}>{row.status}</span>
-              <span className="mono">{row.progress}</span>
-              <span className="mono">{row.date}</span>
-              <button className="table-action" type="button" aria-label="Edit entry">
+              <span className="mono">{String(index + 1).padStart(2, "0")}</span>
+              <img className="row-cover" src={entry.cover} alt={entry.title} />
+              <span className="title-cell">{entry.title}</span>
+              <span className="mono">{entry.format}</span>
+              <span className="mono">{entry.user_score ?? "--"}</span>
+              <span className="mono">{formatScore(entry.official_score)}</span>
+              <span className={`status-chip ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span>
+              <span className="mono">
+                {entry.progress} / {entry.total ?? "--"}
+              </span>
+              <span className="mono">{entry.date_added.slice(0, 10)}</span>
+              <button className="table-action" type="button" aria-label="Edit entry" onClick={() => onEdit(entry)}>
                 ✎
               </button>
             </div>
@@ -556,11 +360,81 @@ function LibraryView({
   );
 }
 
-function ExploreView() {
+function ExploreView({
+  entryMap,
+  onAdd,
+  onDetail,
+}: {
+  entryMap: Map<string, OkamiEntry>;
+  onAdd: (media: OkamiMedia) => void;
+  onDetail: (media: OkamiMedia) => void;
+}) {
   const [activeGenre, setActiveGenre] = useState("Action");
   const [activeSeason, setActiveSeason] = useState("Spring");
   const [activeStudio, setActiveStudio] = useState("Bones");
-  const [activeType, setActiveType] = useState("Anime");
+  const [activeType, setActiveType] = useState<"Anime" | "Manga">("Anime");
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<OkamiMedia[]>([]);
+  const [topAnime, setTopAnime] = useState<OkamiMedia[]>([]);
+  const [topManga, setTopManga] = useState<OkamiMedia[]>([]);
+  const [seasonal, setSeasonal] = useState<OkamiMedia[]>([]);
+  const [loadingSearch, setLoadingSearch] = useState(false);
+  const [loadingTop, setLoadingTop] = useState(false);
+
+  const debouncedQuery = useDebounce(query, 600);
+  const typeValue: MediaType = activeType === "Manga" ? "manga" : "anime";
+
+  useEffect(() => {
+    let active = true;
+    setLoadingTop(true);
+    Promise.all([fetchTop("anime"), fetchTop("manga"), fetchSeason()])
+      .then(([anime, manga, season]) => {
+        if (!active) return;
+        setTopAnime(anime);
+        setTopManga(manga);
+        setSeasonal(season);
+      })
+      .catch(() => {
+        if (!active) return;
+        setTopAnime([]);
+        setTopManga([]);
+        setSeasonal([]);
+      })
+      .finally(() => {
+        if (active) setLoadingTop(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!debouncedQuery) {
+      setResults([]);
+      setLoadingSearch(false);
+      return;
+    }
+    setLoadingSearch(true);
+    searchMedia(typeValue, debouncedQuery)
+      .then((data) => {
+        if (!active) return;
+        setResults(data);
+      })
+      .catch(() => {
+        if (!active) return;
+        setResults([]);
+      })
+      .finally(() => {
+        if (active) setLoadingSearch(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [debouncedQuery, typeValue]);
+
+  const featured = seasonal[0];
+  const heroSide = seasonal.slice(1, 3);
 
   return (
     <>
@@ -580,7 +454,12 @@ function ExploreView() {
             <path d="m21 21-4.35-4.35" />
           </svg>
         </span>
-        <input className="search-input" placeholder="SEARCH TITLE, AUTHOR, STUDIO..." />
+        <input
+          className="search-input"
+          placeholder="SEARCH TITLE, AUTHOR, STUDIO..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
         <div className="view-toggle">
           <button className="view-btn active" type="button" aria-label="Grid view">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -650,7 +529,7 @@ function ExploreView() {
               key={item}
               className={`pill ${activeType === item ? "active" : ""}`}
               type="button"
-              onClick={() => setActiveType(item)}
+              onClick={() => setActiveType(item as "Anime" | "Manga")}
             >
               {item}
             </button>
@@ -658,110 +537,179 @@ function ExploreView() {
         </div>
       </div>
 
-      <div className="hero-grid">
-        <div
-          className="hero-main"
-          style={{
-            backgroundImage: "url(https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&q=80)",
-          }}
-        >
-          <div className="hero-overlay" />
-          <div className="hero-content">
-            <span className="hero-stamp">Featured</span>
-            <h3 className="hero-title">Dungeon Meshi</h3>
-            <div className="hero-tags">
-              <span className="tag">Fantasy</span>
-              <span className="tag">Adventure</span>
-              <span className="tag">Seinen</span>
-            </div>
-            <button className="hero-btn" type="button">
-              + Add to Library
-            </button>
-          </div>
-        </div>
-        <div className="hero-side">
-          {[
-            {
-              title: "Heavenly Delusion",
-              tag: "Sci-Fi",
-              img: "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=600&q=80",
-            },
-            {
-              title: "Witch Hat Atelier",
-              tag: "Fantasy",
-              img: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=600&q=80",
-            },
-          ].map((item) => (
-            <div className="hero-mini" key={item.title}>
-              <img src={item.img} alt={item.title} />
-              <div className="hero-mini-content">
-                <div className="hero-mini-title">{item.title}</div>
-                <div className="hero-mini-tags">
-                  <span className="tag">{item.tag}</span>
+      {query.trim().length === 0 ? (
+        <>
+          <div className="hero-grid">
+            <div
+              className="hero-main"
+              style={{
+                backgroundImage: `url(${featured?.cover || "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&q=80"})`,
+              }}
+            >
+              <div className="hero-overlay" />
+              <div className="hero-content">
+                <span className="hero-stamp">Featured</span>
+                <h3 className="hero-title">{featured?.title || "Dungeon Meshi"}</h3>
+                <div className="hero-tags">
+                  {(featured?.genres.slice(0, 3) || ["Fantasy", "Adventure", "Seinen"]).map((tag) => (
+                    <span className="tag" key={tag}>
+                      {tag}
+                    </span>
+                  ))}
                 </div>
-                <button className="hero-mini-btn" type="button">
-                  + Add
+                <button className="hero-btn" type="button" onClick={() => featured && onAdd(featured)}>
+                  + Add to Library
                 </button>
               </div>
             </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="section-header">
-        <span className="section-title">Search Results</span>
-      </div>
-      <div className="grid results-grid">
-        {exploreResults.map((item) => (
-          <article className="card" key={`${item.title}-${item.year}`}>
-            <div className="card-img-wrap">
-              <img className="card-img" src={item.cover} alt={item.title} />
-              <div className="card-img-overlay" />
-              <div className="card-actions">
-                <button
-                  className={`card-action-btn ${item.inLibrary ? "in-library" : "primary"}`}
-                  type="button"
-                >
-                  {item.inLibrary ? "In Library ✓" : "+ Add to Library"}
-                </button>
-              </div>
-              <div className={`score-badge ${Number(item.score) >= 9 ? "gold" : ""}`}>{item.score}</div>
+            <div className="hero-side">
+              {(heroSide.length ? heroSide : []).map((item) => (
+                <div className="hero-mini" key={item.id}>
+                  <img src={item.cover} alt={item.title} />
+                  <div className="hero-mini-content">
+                    <div className="hero-mini-title">{item.title}</div>
+                    <div className="hero-mini-tags">
+                      <span className="tag">{item.genres[0] || "Feature"}</span>
+                    </div>
+                    <button className="hero-mini-btn" type="button" onClick={() => onAdd(item)}>
+                      + Add
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {loadingTop && heroSide.length === 0 ? (
+                <div className="empty-state">Loading seasonal picks…</div>
+              ) : null}
             </div>
-            <div className="card-info">
-              <div className="card-title">{item.title}</div>
-              <div className="card-meta">
-                <span>{item.year}</span> • {item.format}
-              </div>
-            </div>
-          </article>
-        ))}
-      </div>
+          </div>
 
-      {curatedStrips.map((strip) => (
-        <section className="strip" key={strip.title}>
-          <div className="strip-header">
-            <span className="section-title">{strip.title}</span>
-            <button className="strip-link" type="button">
-              View All →
-            </button>
+          <section className="strip">
+            <div className="strip-header">
+              <span className="section-title">Top Rated This Season</span>
+              <button className="strip-link" type="button">
+                View All →
+              </button>
+            </div>
+            <div className="strip-cards">
+              {(seasonal.length ? seasonal : []).slice(0, 8).map((item) => (
+                <div className="strip-card" key={item.id}>
+                  <div className="strip-card-title">{item.title}</div>
+                  <div className="strip-card-tag">{item.genres[0] || "Season"}</div>
+                </div>
+              ))}
+              {loadingTop && seasonal.length === 0 ? <div className="strip-card">Loading…</div> : null}
+            </div>
+          </section>
+
+          <section className="strip">
+            <div className="strip-header">
+              <span className="section-title">All-Time Classics</span>
+              <button className="strip-link" type="button">
+                View All →
+              </button>
+            </div>
+            <div className="strip-cards">
+              {topAnime.slice(0, 8).map((item) => (
+                <div className="strip-card" key={item.id}>
+                  <div className="strip-card-title">{item.title}</div>
+                  <div className="strip-card-tag">Top Anime</div>
+                </div>
+              ))}
+              {loadingTop && topAnime.length === 0 ? <div className="strip-card">Loading…</div> : null}
+            </div>
+          </section>
+
+          <section className="strip">
+            <div className="strip-header">
+              <span className="section-title">Manga Essentials</span>
+              <button className="strip-link" type="button">
+                View All →
+              </button>
+            </div>
+            <div className="strip-cards">
+              {topManga.slice(0, 8).map((item) => (
+                <div className="strip-card" key={item.id}>
+                  <div className="strip-card-title">{item.title}</div>
+                  <div className="strip-card-tag">Top Manga</div>
+                </div>
+              ))}
+              {loadingTop && topManga.length === 0 ? <div className="strip-card">Loading…</div> : null}
+            </div>
+          </section>
+        </>
+      ) : (
+        <>
+          <div className="section-header">
+            <span className="section-title">Search Results</span>
           </div>
-          <div className="strip-cards">
-            {strip.items.map((item) => (
-              <div className="strip-card" key={item}>
-                <div className="strip-card-title">{item}</div>
-                <div className="strip-card-tag">Curated</div>
-              </div>
-            ))}
-          </div>
-        </section>
-      ))}
+          {loadingSearch ? (
+            <div className="grid results-grid">
+              {Array.from({ length: 8 }).map((_, index) => (
+                <div className="skeleton-card" key={`skeleton-${index}`}>
+                  <div className="skeleton skeleton-img" />
+                  <div className="skeleton-body">
+                    <div className="skeleton skeleton-line" />
+                    <div className="skeleton skeleton-line short" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : results.length === 0 ? (
+            <div className="empty-state">No results yet. Try a new title.</div>
+          ) : (
+            <div className="grid results-grid">
+              {results.map((item) => {
+                const inLibrary = entryMap.has(mediaKey(item));
+                return (
+                  <article className="card" key={mediaKey(item)}>
+                    <div className="card-img-wrap">
+                      <img className="card-img" src={item.cover} alt={item.title} />
+                      <div className="card-img-overlay" />
+                      <div className="card-actions">
+                        <button
+                          className={`card-action-btn ${inLibrary ? "in-library" : "primary"}`}
+                          type="button"
+                          onClick={() => (inLibrary ? onDetail(item) : onAdd(item))}
+                        >
+                          {inLibrary ? "In Library ✓" : "+ Add to Library"}
+                        </button>
+                      </div>
+                      <div className={`score-badge ${item.official_score >= 9 ? "gold" : ""}`}>
+                        {formatScore(item.official_score)}
+                      </div>
+                    </div>
+                    <div className="card-info">
+                      <div className="card-title">{item.title}</div>
+                      <div className="card-meta">
+                        <span>{item.year || "--"}</span> • {item.format}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
     </>
   );
 }
 
-function MyListView() {
+function MyListView({
+  entries,
+  scoreDistribution,
+}: {
+  entries: OkamiEntry[];
+  scoreDistribution: Array<{ score: number; value: number }>;
+}) {
   const [activeTab, setActiveTab] = useState("All");
   const tabs = ["All", "Watching", "Completed", "On Hold", "Dropped", "Plan to Watch"];
+
+  const filteredEntries = useMemo(() => {
+    if (activeTab === "All") return entries;
+    const statusValue = statusOptions.find((option) => option.label === activeTab)?.value;
+    return entries.filter((entry) => entry.status === statusValue);
+  }, [entries, activeTab]);
 
   return (
     <>
@@ -770,22 +718,34 @@ function MyListView() {
           <span className="page-title-kanji">一覧</span>
           <span className="page-title-slash">/</span>
           <span className="page-title">MY LIST</span>
-          <span className="entries-badge">042 entries</span>
+          <span className="entries-badge">{String(entries.length).padStart(3, "0")} entries</span>
         </div>
       </div>
 
       <div className="stat-strip">
-        {[
-          { label: "Total Entries", value: "042" },
-          { label: "Completed", value: "18" },
-          { label: "Currently Watching", value: "06" },
-          { label: "Mean Score", value: "8.7" },
-        ].map((stat) => (
-          <div className="stat-pill" key={stat.label}>
-            <span className="stat-label">{stat.label}</span>
-            <span className="stat-value">{stat.value}</span>
-          </div>
-        ))}
+        <div className="stat-pill">
+          <span className="stat-label">Total Entries</span>
+          <span className="stat-value">{String(entries.length).padStart(3, "0")}</span>
+        </div>
+        <div className="stat-pill">
+          <span className="stat-label">Completed</span>
+          <span className="stat-value">{String(entries.filter((entry) => entry.status === "completed").length).padStart(2, "0")}</span>
+        </div>
+        <div className="stat-pill">
+          <span className="stat-label">Currently Watching</span>
+          <span className="stat-value">{String(entries.filter((entry) => entry.status === "watching").length).padStart(2, "0")}</span>
+        </div>
+        <div className="stat-pill">
+          <span className="stat-label">Mean Score</span>
+          <span className="stat-value">
+            {entries.length
+              ? (
+                  entries.reduce((sum, entry) => sum + (entry.user_score ?? 0), 0) /
+                  Math.max(1, entries.filter((entry) => entry.user_score != null).length)
+                ).toFixed(1)
+              : "--"}
+          </span>
+        </div>
       </div>
 
       <div className="status-tabs">
@@ -801,39 +761,45 @@ function MyListView() {
         ))}
       </div>
 
-      <div className="list-table">
-        <div className="list-row table-header">
-          <span>#</span>
-          <span>Cover</span>
-          <span>Title</span>
-          <span>Type</span>
-          <span>My Score</span>
-          <span>Official</span>
-          <span>Status</span>
-          <span>Progress</span>
-          <span>Date Added</span>
-          <span>⋯</span>
-        </div>
-        {myListRows.map((row, index) => (
-          <div
-            className={`list-row ${index % 2 === 0 ? "row-alt" : ""} ${row.statusClass === "watching" ? "row-watching" : ""}`}
-            key={row.id}
-          >
-            <span className="mono">{row.id}</span>
-            <img className="row-cover" src={row.cover} alt={row.title} />
-            <span className="title-cell">{row.title}</span>
-            <span className="mono">{row.type}</span>
-            <span className="score-chip">{row.myScore}</span>
-            <span className="mono">{row.officialScore}</span>
-            <span className={`status-chip ${row.statusClass}`}>{row.status}</span>
-            <span className="progress-chip">{row.progress}</span>
-            <span className="mono">{row.date}</span>
-            <button className="table-action" type="button" aria-label="More actions">
-              ⋯
-            </button>
+      {entries.length === 0 ? (
+        <div className="empty-state">No entries yet. Add titles from Explore.</div>
+      ) : (
+        <div className="list-table">
+          <div className="list-row table-header">
+            <span>#</span>
+            <span>Cover</span>
+            <span>Title</span>
+            <span>Type</span>
+            <span>My Score</span>
+            <span>Official</span>
+            <span>Status</span>
+            <span>Progress</span>
+            <span>Date Added</span>
+            <span>⋯</span>
           </div>
-        ))}
-      </div>
+          {filteredEntries.map((entry, index) => (
+            <div
+              className={`list-row ${index % 2 === 0 ? "row-alt" : ""} ${entry.status === "watching" ? "row-watching" : ""}`}
+              key={entryKey(entry)}
+            >
+              <span className="mono">{String(index + 1).padStart(2, "0")}</span>
+              <img className="row-cover" src={entry.cover} alt={entry.title} />
+              <span className="title-cell">{entry.title}</span>
+              <span className="mono">{entry.format}</span>
+              <span className="score-chip">{entry.user_score ?? "--"}</span>
+              <span className="mono">{formatScore(entry.official_score)}</span>
+              <span className={`status-chip ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span>
+              <span className="progress-chip">
+                {entry.progress} / {entry.total ?? "--"}
+              </span>
+              <span className="mono">{entry.date_added.slice(0, 10)}</span>
+              <button className="table-action" type="button" aria-label="More actions">
+                ⋯
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="chart-grid">
         <div className="chart-panel">
@@ -849,7 +815,7 @@ function MyListView() {
             ))}
           </div>
         </div>
-        <div className="chart-panel">
+        <div className="chart-panel donut-panel">
           <div className="chart-title">Genre Breakdown</div>
           <div className="donut-wrap">
             <div className="donut" />
@@ -875,7 +841,7 @@ function MyListView() {
   );
 }
 
-function ProfileView() {
+function ProfileView({ profileStats }: { profileStats: Array<{ label: string; value: string }> }) {
   return (
     <>
       <div className="page-header">
@@ -908,14 +874,20 @@ function ProfileView() {
             <span className="section-title">Favourite Titles</span>
           </div>
           <div className="favourite-row">
-            {favouriteTitles.map((title) => (
+            {[
+              "Berserk",
+              "Monster",
+              "Vagabond",
+              "Mushishi",
+              "Evangelion",
+            ].map((title) => (
               <div className="favourite-card" key={title}>
                 <span className="favourite-title">{title}</span>
               </div>
             ))}
           </div>
         </div>
-        <div className="profile-card">
+        <div className="profile-card settings-card">
           <div className="section-header">
             <span className="section-title">Settings</span>
           </div>
@@ -936,6 +908,168 @@ function ProfileView() {
   );
 }
 
+function AddEntryModal({
+  state,
+  onClose,
+  onSave,
+}: {
+  state: { media: OkamiMedia; entry?: OkamiEntry } | null;
+  onClose: () => void;
+  onSave: (data: { status: OkamiStatus; progress: number; userScore: number | null; notes: string }) => void;
+}) {
+  const media = state?.media;
+  const entry = state?.entry;
+  const [status, setStatus] = useState<OkamiStatus>(entry?.status ?? "plan_to_watch");
+  const [progress, setProgress] = useState(entry?.progress ?? 0);
+  const [userScore, setUserScore] = useState<number | null>(entry?.user_score ?? null);
+  const [notes, setNotes] = useState(entry?.notes ?? "");
+
+  useEffect(() => {
+    if (!media) return;
+    setStatus(entry?.status ?? "plan_to_watch");
+    setProgress(entry?.progress ?? 0);
+    setUserScore(entry?.user_score ?? null);
+    setNotes(entry?.notes ?? "");
+  }, [media, entry]);
+
+  if (!media) return null;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <img className="modal-cover" src={media.cover} alt={media.title} />
+          <div>
+            <div className="modal-title">{media.title}</div>
+            <div className="modal-meta">
+              <span>{media.year || "--"}</span> • {media.format}
+            </div>
+            <div className="modal-tags">
+              {media.genres.slice(0, 4).map((tag) => (
+                <span className="tag" key={tag}>
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="modal-fields">
+          <label className="field">
+            <span className="field-label">Status</span>
+            <select value={status} onChange={(event) => setStatus(event.target.value as OkamiStatus)}>
+              {statusOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span className="field-label">Progress</span>
+            <input
+              type="number"
+              min={0}
+              value={progress}
+              onChange={(event) => setProgress(Number(event.target.value))}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">My Score</span>
+            <select
+              value={userScore ?? ""}
+              onChange={(event) => setUserScore(event.target.value ? Number(event.target.value) : null)}
+            >
+              <option value="">--</option>
+              {Array.from({ length: 10 }, (_, index) => 10 - index).map((score) => (
+                <option key={score} value={score}>
+                  {score}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field field-notes">
+            <span className="field-label">Notes</span>
+            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} />
+          </label>
+        </div>
+
+        <div className="modal-actions">
+          <button className="modal-btn ghost" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="modal-btn primary"
+            type="button"
+            onClick={() => onSave({ status, progress, userScore, notes })}
+          >
+            {entry ? "Update Entry" : "Add to Library"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailPanel({
+  media,
+  loading,
+  inLibrary,
+  onClose,
+  onAdd,
+}: {
+  media: OkamiMedia | null;
+  loading: boolean;
+  inLibrary: boolean;
+  onClose: () => void;
+  onAdd: () => void;
+}) {
+  if (!media) return null;
+
+  return (
+    <div className="detail-overlay" onClick={onClose}>
+      <aside className="detail-panel" onClick={(event) => event.stopPropagation()}>
+        <button className="detail-close" type="button" onClick={onClose}>
+          ✕
+        </button>
+        <div className="detail-cover-wrap">
+          <img className="detail-cover" src={media.cover} alt={media.title} />
+        </div>
+        <div className="detail-header">
+          <div className="detail-title">{media.title}</div>
+          <div className="detail-meta">
+            <span>{media.year || "--"}</span>
+            <span>•</span>
+            <span>{media.format}</span>
+            <span>•</span>
+            <span>{media.total ? `${media.total} total` : "Ongoing"}</span>
+          </div>
+          <div className="detail-tags">
+            {media.genres.map((tag) => (
+              <span className="tag" key={tag}>
+                {tag}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="detail-score">
+          <span className="detail-score-label">MAL SCORE</span>
+          <span className="detail-score-value">{formatScore(media.official_score)}</span>
+        </div>
+        <div className="detail-actions">
+          <button className="modal-btn primary" type="button" onClick={onAdd}>
+            {inLibrary ? "Update Entry" : "Add to Library"}
+          </button>
+        </div>
+        <div className="detail-section">
+          <div className="detail-section-title">Synopsis</div>
+          <p className="detail-synopsis">{loading ? "Loading details…" : media.synopsis || "No synopsis yet."}</p>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 export default function Home() {
   const [activeNav, setActiveNav] = useState("Library");
   const [activeTab, setActiveTab] = useState("Anime");
@@ -943,9 +1077,105 @@ export default function Home() {
   const [activeType, setActiveType] = useState("All");
   const [activeGenre, setActiveGenre] = useState("Action");
   const [activeStatus, setActiveStatus] = useState("Watching");
+  const [sortBy, setSortBy] = useState<(typeof sortOptions)[number]>("Date Added");
+  const [entries, setEntries] = useState<OkamiEntry[]>([]);
+  const [modalState, setModalState] = useState<{ media: OkamiMedia; entry?: OkamiEntry } | null>(null);
+  const [detailMedia, setDetailMedia] = useState<OkamiMedia | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  useEffect(() => {
+    setEntries(readEntries());
+  }, []);
+
+  const entryMap = useMemo(() => new Map(entries.map((entry) => [entryKey(entry), entry])), [entries]);
+
+  const scoreDistribution = useMemo(() => {
+    const buckets = Array.from({ length: 10 }, (_, index) => ({ score: 10 - index, value: 0 }));
+    entries.forEach((entry) => {
+      if (typeof entry.user_score === "number" && entry.user_score >= 1 && entry.user_score <= 10) {
+        const idx = 10 - entry.user_score;
+        if (buckets[idx]) buckets[idx].value += 1;
+      }
+    });
+    return buckets;
+  }, [entries]);
+
+  const profileStats = useMemo(() => {
+    const totalEntries = entries.length;
+    const episodesWatched = entries.filter((entry) => entry.type === "anime").reduce((sum, entry) => sum + entry.progress, 0);
+    const chaptersRead = entries.filter((entry) => entry.type === "manga").reduce((sum, entry) => sum + entry.progress, 0);
+    const daysConsumed = Math.round((episodesWatched * 24 + chaptersRead * 5) / 60 / 24) || 0;
+    const genreCount = new Map<string, number>();
+    entries.forEach((entry) => {
+      entry.genres.forEach((genre) => {
+        genreCount.set(genre, (genreCount.get(genre) ?? 0) + 1);
+      });
+    });
+    const favouriteGenre = Array.from(genreCount.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "--";
+    const scoredEntries = entries.filter((entry) => entry.user_score != null);
+    const meanScore = scoredEntries.length
+      ? (scoredEntries.reduce((sum, entry) => sum + (entry.user_score ?? 0), 0) / scoredEntries.length).toFixed(1)
+      : "--";
+
+    return [
+      { label: "Total Entries", value: String(totalEntries).padStart(3, "0") },
+      { label: "Episodes Watched", value: String(episodesWatched) },
+      { label: "Chapters Read", value: String(chaptersRead) },
+      { label: "Days Consumed", value: String(daysConsumed) },
+      { label: "Favourite Genre", value: favouriteGenre },
+      { label: "Mean Score", value: meanScore },
+    ];
+  }, [entries]);
 
   const viewClass =
-    activeNav === "Explore" ? "explore" : activeNav === "My List" ? "list" : activeNav === "Profile" ? "profile" : "library";
+    activeNav === "Explore"
+      ? "explore"
+      : activeNav === "My List"
+        ? "list"
+        : activeNav === "Profile"
+          ? "profile"
+          : "library";
+
+  const handleSaveEntry = (data: { status: OkamiStatus; progress: number; userScore: number | null; notes: string }) => {
+    if (!modalState) return;
+    const { media, entry } = modalState;
+    const now = new Date().toISOString();
+    const nextEntry: OkamiEntry = {
+      id: media.id,
+      type: media.type,
+      title: media.title,
+      cover: media.cover,
+      year: media.year,
+      format: media.format,
+      genres: media.genres,
+      official_score: media.official_score,
+      user_score: data.userScore,
+      status: data.status,
+      progress: data.progress,
+      total: media.total ?? null,
+      date_added: entry?.date_added ?? now,
+      notes: data.notes,
+      is_favourite: entry?.is_favourite ?? false,
+    };
+
+    const nextEntries = upsertEntry(entries, nextEntry);
+    setEntries(nextEntries);
+    writeEntries(nextEntries);
+    setModalState(null);
+  };
+
+  const openDetail = async (media: OkamiMedia) => {
+    setDetailMedia(media);
+    setDetailLoading(true);
+    try {
+      const detail = await fetchDetail(media.type, media.id);
+      setDetailMedia(detail);
+    } catch {
+      setDetailMedia(media);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   return (
     <div className="app">
@@ -1023,25 +1253,49 @@ export default function Home() {
         </div>
 
         <div className={`content content-area-bg ${viewClass}`}>
-          <div key={activeNav} className="view-panel">
-            {activeNav === "Library" ? (
-              <LibraryView
-                activeView={activeView}
-                setActiveView={setActiveView}
-                activeType={activeType}
-                setActiveType={setActiveType}
-                activeGenre={activeGenre}
-                setActiveGenre={setActiveGenre}
-                activeStatus={activeStatus}
-                setActiveStatus={setActiveStatus}
-              />
-            ) : null}
-            {activeNav === "Explore" ? <ExploreView /> : null}
-            {activeNav === "My List" ? <MyListView /> : null}
-            {activeNav === "Profile" ? <ProfileView /> : null}
+          <div className="content-inner">
+            <div key={activeNav} className="view-panel">
+              {activeNav === "Library" ? (
+                <LibraryView
+                  entries={entries}
+                  activeView={activeView}
+                  setActiveView={setActiveView}
+                  activeType={activeType}
+                  setActiveType={setActiveType}
+                  activeGenre={activeGenre}
+                  setActiveGenre={setActiveGenre}
+                  activeStatus={activeStatus}
+                  setActiveStatus={setActiveStatus}
+                  sortBy={sortBy}
+                  setSortBy={setSortBy}
+                  onDetail={openDetail}
+                  onEdit={(entry) => setModalState({ media: entryToMedia(entry), entry })}
+                />
+              ) : null}
+              {activeNav === "Explore" ? (
+                <ExploreView
+                  entryMap={entryMap}
+                  onAdd={(media) => setModalState({ media })}
+                  onDetail={openDetail}
+                />
+              ) : null}
+              {activeNav === "My List" ? (
+                <MyListView entries={entries} scoreDistribution={scoreDistribution} />
+              ) : null}
+              {activeNav === "Profile" ? <ProfileView profileStats={profileStats} /> : null}
+            </div>
           </div>
         </div>
       </main>
+
+      <AddEntryModal state={modalState} onClose={() => setModalState(null)} onSave={handleSaveEntry} />
+      <DetailPanel
+        media={detailMedia}
+        loading={detailLoading}
+        inLibrary={detailMedia ? entryMap.has(mediaKey(detailMedia)) : false}
+        onClose={() => setDetailMedia(null)}
+        onAdd={() => detailMedia && setModalState({ media: detailMedia, entry: entryMap.get(mediaKey(detailMedia)) })}
+      />
     </div>
   );
 }
