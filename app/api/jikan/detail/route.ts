@@ -1,4 +1,4 @@
-import { JIKAN_BASE, ensureMediaType, normalizeItem } from "@/app/lib/jikan";
+import { JIKAN_BASE, ensureMediaType, normalizeItem, type JikanItem } from "@/app/lib/jikan";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -16,13 +16,13 @@ export async function GET(request: Request) {
     if (!response.ok) {
       return Response.json({ error: "Jikan request failed." }, { status: 502 });
     }
-    const payload = await response.json();
+    const payload = (await response.json()) as { data?: JikanItem };
     if (!payload?.data) {
       return Response.json({ error: "Not found." }, { status: 404 });
     }
     const data = normalizeItem(payload.data, type);
     return Response.json({ data });
-  } catch (error) {
+  } catch {
     return Response.json({ error: "Jikan request failed." }, { status: 502 });
   }
 }

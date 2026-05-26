@@ -10,9 +10,25 @@ export type OkamiMedia = {
   genres: string[];
   official_score: number;
   total: number | null;
+  episodes?: number | null;
+  chapters?: number | null;
+  volumes?: number | null;
   synopsis?: string;
   studios?: string[];
   authors?: string[];
+};
+
+export type JikanEpisode = {
+  mal_id: number;
+  title?: string | null;
+  title_english?: string | null;
+  title_japanese?: string | null;
+  duration?: string | null;
+};
+
+export type JikanRelation = {
+  relation?: string | null;
+  entry?: Array<{ mal_id: number; type?: string; name?: string }>; // Jikan relation items
 };
 
 type JikanImage = {
@@ -28,7 +44,7 @@ type JikanImages = {
 
 type JikanNamed = { name: string };
 
-type JikanItem = {
+export type JikanItem = {
   mal_id: number;
   title?: string;
   title_english?: string;
@@ -121,8 +137,37 @@ export function normalizeItem(item: JikanItem, type: MediaType): OkamiMedia {
     genres,
     official_score: officialScore,
     total,
+    episodes: item.episodes ?? null,
+    chapters: item.chapters ?? null,
+    volumes: item.volumes ?? null,
     synopsis: item.synopsis || "",
     studios: item.studios?.map((studio) => studio.name) || [],
     authors: item.authors?.map((author) => author.name) || [],
   };
+}
+
+async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  if (!response.ok) {
+    throw new Error(`Jikan request failed: ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+export async function getAnimeEpisodes(id: number): Promise<JikanEpisode[]> {
+  const url = `${JIKAN_BASE}/anime/${id}/episodes`;
+  const data = await getJson<{ data?: JikanEpisode[] }>(url, { cache: "force-cache" });
+  return Array.isArray(data?.data) ? data.data : [];
+}
+
+export async function getMangaVolumes(id: number): Promise<unknown[]> {
+  const url = `${JIKAN_BASE}/manga/${id}/characters`;
+  const data = await getJson<{ data?: unknown[] }>(url, { cache: "force-cache" });
+  return Array.isArray(data?.data) ? data.data : [];
+}
+
+export async function getRelated(type: MediaType, id: number): Promise<JikanRelation[]> {
+  const url = `${JIKAN_BASE}/${type}/${id}/relations`;
+  const data = await getJson<{ data?: JikanRelation[] }>(url, { cache: "force-cache" });
+  return Array.isArray(data?.data) ? data.data : [];
 }

@@ -1,4 +1,4 @@
-import { JIKAN_BASE, normalizeItem } from "@/app/lib/jikan";
+import { JIKAN_BASE, normalizeItem, type JikanItem } from "@/app/lib/jikan";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -15,10 +15,10 @@ export async function GET(request: Request) {
     if (!response.ok) {
       return Response.json({ error: "Jikan request failed." }, { status: 502 });
     }
-    const payload = await response.json();
-    const data = Array.isArray(payload?.data) ? payload.data.map((item: any) => normalizeItem(item, "anime")) : [];
+    const payload = (await response.json()) as { data?: JikanItem[] };
+    const data = Array.isArray(payload?.data) ? payload.data.map((item) => normalizeItem(item, "anime")) : [];
     return Response.json({ data });
-  } catch (error) {
+  } catch {
     return Response.json({ error: "Jikan request failed." }, { status: 502 });
   }
 }

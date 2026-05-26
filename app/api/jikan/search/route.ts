@@ -1,4 +1,4 @@
-import { JIKAN_BASE, ensureMediaType, normalizeItem } from "@/app/lib/jikan";
+import { JIKAN_BASE, ensureMediaType, normalizeItem, type JikanItem } from "@/app/lib/jikan";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -28,8 +28,8 @@ export async function GET(request: Request) {
     if (!response.ok) {
       return Response.json({ error: "Jikan request failed." }, { status: 502 });
     }
-    const payload = await response.json();
-    const normalized = Array.isArray(payload?.data) ? payload.data.map((item: any) => normalizeItem(item, type)) : [];
+    const payload = (await response.json()) as { data?: JikanItem[] };
+    const normalized = Array.isArray(payload?.data) ? payload.data.map((item) => normalizeItem(item, type)) : [];
     const studioFilter = studio.toLowerCase();
     const data = studioFilter
       ? normalized.filter((item) => {
@@ -39,7 +39,7 @@ export async function GET(request: Request) {
         })
       : normalized;
     return Response.json({ data });
-  } catch (error) {
+  } catch {
     return Response.json({ error: "Jikan request failed." }, { status: 502 });
   }
 }
