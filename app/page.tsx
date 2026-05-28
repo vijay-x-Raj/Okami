@@ -76,7 +76,7 @@ const libraryFilters = {
     { label: "Dropped", value: "dropped" },
     { label: "PTW", value: "plan_to_watch" },
   ],
-};
+} as const;
 
 const statusOptions: Array<{ value: OkamiStatus; label: string; className: string }> = [
   { value: "watching", label: "Watching", className: "watching" },
@@ -114,7 +114,7 @@ function useDebounce<T>(value: T, delay: number) {
   return debounced;
 }
 
-function useOutsideClick<T extends HTMLElement>(ref: RefObject<T>, onClose: () => void) {
+function useOutsideClick(ref: RefObject<HTMLElement | null>, onClose: () => void) {
   useEffect(() => {
     function handleMouseDown(event: MouseEvent) {
       if (ref.current && !ref.current.contains(event.target as Node)) {
@@ -1684,7 +1684,14 @@ function DetailPanel({
   const [related, setRelated] = useState<JikanRelation[]>([]);
   const [tabLoading, setTabLoading] = useState(false);
 
-  const relatedItems = useMemo(() => {
+  const relatedItems = useMemo<
+    {
+      id: number;
+      type: MediaType;
+      name: string;
+      relation: string;
+    }[]
+  >(() => {
     return related.flatMap((relation) =>
       (relation.entry || []).map((entry) => ({
         id: entry.mal_id,
