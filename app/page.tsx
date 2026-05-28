@@ -114,7 +114,7 @@ function useDebounce<T>(value: T, delay: number) {
   return debounced;
 }
 
-function useOutsideClick(ref: RefObject<HTMLElement>, onClose: () => void) {
+function useOutsideClick(ref: RefObject<HTMLElement | null>, onClose: () => void) {
   useEffect(() => {
     function handleMouseDown(event: MouseEvent) {
       if (ref.current && !ref.current.contains(event.target as Node)) {
@@ -135,6 +135,17 @@ function statusLabel(status: OkamiStatus) {
 function statusClass(status: OkamiStatus) {
   const match = statusOptions.find((option) => option.value === status);
   return match?.className ?? "plan";
+}
+
+function entryCategory(entry: OkamiEntry) {
+  const format = entry.format?.toLowerCase?.() ?? "";
+  if (format === "film" || format === "movie") {
+    return { label: "Film", className: "type-film" };
+  }
+  if (entry.type === "manga") {
+    return { label: "Manga", className: "type-manga" };
+  }
+  return { label: "Anime", className: "type-anime" };
 }
 
 function entryKey(entry: OkamiEntry) {
@@ -490,16 +501,26 @@ function LibraryView({
       <div className="filter-bar">
         <div className="filter-section">
           <span className="filter-label">Type</span>
-          {libraryFilters.type.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              className={`pill ${activeType === item.value ? "active" : ""}`}
-              onClick={() => setActiveType(activeType === item.value ? "all" : item.value)}
-            >
-              {item.label}
-            </button>
-          ))}
+          {libraryFilters.type.map((item) => {
+            const typeClass =
+              item.value === "anime"
+                ? "type-anime"
+                : item.value === "manga"
+                  ? "type-manga"
+                  : item.value === "films"
+                    ? "type-film"
+                    : "";
+            return (
+              <button
+                key={item.value}
+                type="button"
+                className={`pill ${typeClass ? `pill-type ${typeClass}` : ""} ${activeType === item.value ? "active" : ""}`}
+                onClick={() => setActiveType(activeType === item.value ? "all" : item.value)}
+              >
+                {item.label}
+              </button>
+            );
+          })}
         </div>
 
         <div className="filter-divider" />
@@ -578,32 +599,39 @@ function LibraryView({
         </div>
       ) : activeView === "grid" ? (
         <div className="grid library-grid">
-          {displayedEntries.map((entry) => (
-            <article className="card" key={entryKey(entry)}>
-              <div className="card-img-wrap">
-                <img className="card-img" src={entry.cover} alt={entry.title} />
-                <div className="card-img-overlay" />
-                <div className="card-actions">
-                  <button className="card-action-btn" type="button" onClick={() => onEdit(entry)}>
-                    Update
-                  </button>
-                  <button className="card-action-btn" type="button" onClick={() => onDetail(entryToMedia(entry))}>
-                    Detail
-                  </button>
+          {displayedEntries.map((entry) => {
+            const category = entryCategory(entry);
+            return (
+              <article className="card" key={entryKey(entry)}>
+                <div className="card-img-wrap">
+                  <img className="card-img" src={entry.cover} alt={entry.title} />
+                  <div className="card-img-overlay" />
+                  <div className="card-actions">
+                    <button className="card-action-btn" type="button" onClick={() => onEdit(entry)}>
+                      Update
+                    </button>
+                    <button className="card-action-btn" type="button" onClick={() => onDetail(entryToMedia(entry))}>
+                      Detail
+                    </button>
+                  </div>
+                  <div className={`score-badge ${entry.official_score >= 9 ? "gold" : ""}`}>
+                    {formatScore(entry.official_score)}
+                  </div>
+                  <div className={`status-badge ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</div>
                 </div>
-                <div className={`score-badge ${entry.official_score >= 9 ? "gold" : ""}`}>
-                  {formatScore(entry.official_score)}
+                <div className="card-info">
+                  <div className="card-title">{entry.title}</div>
+                  <div className="card-meta">
+                    <span className={`type-chip ${category.className}`}>{category.label}</span>
+                    <span className="meta-dot">•</span>
+                    <span>{entry.year || "--"}</span>
+                    <span className="meta-dot">•</span>
+                    <span>{entry.format}</span>
+                  </div>
                 </div>
-                <div className={`status-badge ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</div>
-              </div>
-              <div className="card-info">
-                <div className="card-title">{entry.title}</div>
-                <div className="card-meta">
-                  <span>{entry.year || "--"}</span> • {entry.format}
-                </div>
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
         </div>
       ) : (
         <div className="library-table">
@@ -619,30 +647,33 @@ function LibraryView({
             <span>Date Added</span>
             <span>⋯</span>
           </div>
-          {displayedEntries.map((entry, index) => (
-            <div
-              key={entryKey(entry)}
-              className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${entry.status === "watching" ? "row-watching" : ""}`}
-            >
-              <span className="mono">{String(index + 1).padStart(2, "0")}</span>
-              <img className="row-cover" src={entry.cover} alt={entry.title} />
-              <span className="title-cell">{entry.title}</span>
-              <span className="mono">{entry.format}</span>
-              <span className="mono">{entry.user_score ?? "--"}</span>
-              <span className="mono">{formatScore(entry.official_score)}</span>
-              <span className={`status-chip ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span>
-              <span className="mono">
-                {entry.progress} / {entry.total ?? "--"}
-              </span>
-              <span className="mono">{entry.date_added.slice(0, 10)}</span>
-              <EntryMenu
-                entry={entry}
-                onEdit={onEdit}
-                onRemove={onRemove}
-                onToggleFavourite={onToggleFavourite}
-              />
-            </div>
-          ))}
+          {displayedEntries.map((entry, index) => {
+            const category = entryCategory(entry);
+            return (
+              <div
+                key={entryKey(entry)}
+                className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${entry.status === "watching" ? "row-watching" : ""}`}
+              >
+                <span className="mono">{String(index + 1).padStart(2, "0")}</span>
+                <img className="row-cover" src={entry.cover} alt={entry.title} />
+                <span className="title-cell">{entry.title}</span>
+                <span className={`type-chip ${category.className}`}>{category.label}</span>
+                <span className="mono">{entry.user_score ?? "--"}</span>
+                <span className="mono">{formatScore(entry.official_score)}</span>
+                <span className={`status-chip ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span>
+                <span className="mono">
+                  {entry.progress} / {entry.total ?? "--"}
+                </span>
+                <span className="mono">{entry.date_added.slice(0, 10)}</span>
+                <EntryMenu
+                  entry={entry}
+                  onEdit={onEdit}
+                  onRemove={onRemove}
+                  onToggleFavourite={onToggleFavourite}
+                />
+              </div>
+            );
+          })}
         </div>
       )}
     </>

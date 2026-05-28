@@ -31,6 +31,21 @@ export type JikanRelation = {
   entry?: Array<{ mal_id: number; type?: string; name?: string }>; // Jikan relation items
 };
 
+export type JikanVoiceActor = {
+  id: number;
+  name: string;
+  language?: string;
+  image: string;
+};
+
+export type JikanCharacter = {
+  id: number;
+  name: string;
+  role?: string;
+  image: string;
+  voiceActors: JikanVoiceActor[];
+};
+
 type JikanImage = {
   image_url?: string;
   small_image_url?: string;
@@ -62,6 +77,15 @@ export type JikanItem = {
   authors?: JikanNamed[];
   aired?: { prop?: { from?: { year?: number | null } } };
   published?: { prop?: { from?: { year?: number | null } } };
+};
+
+type JikanCharacterItem = {
+  character?: { mal_id: number; name?: string; images?: JikanImages };
+  role?: string;
+  voice_actors?: Array<{
+    person?: { mal_id: number; name?: string; images?: JikanImages };
+    language?: string;
+  }>;
 };
 
 export const JIKAN_BASE = "https://api.jikan.moe/v4";
@@ -170,4 +194,28 @@ export async function getRelated(type: MediaType, id: number): Promise<JikanRela
   const url = `${JIKAN_BASE}/${type}/${id}/relations`;
   const data = await getJson<{ data?: JikanRelation[] }>(url, { cache: "force-cache" });
   return Array.isArray(data?.data) ? data.data : [];
+}
+
+export async function getAnimeCharacters(id: number): Promise<JikanCharacter[]> {
+  const url = `${JIKAN_BASE}/anime/${id}/characters`;
+  const data = await getJson<{ data?: JikanCharacterItem[] }>(url, { cache: "force-cache" });
+  if (!Array.isArray(data?.data)) return [];
+  return data.data
+    .map((item) => {
+      const character = item.character;
+      const voiceActors = (item.voice_actors || []).map((actor) => ({
+        id: actor.person?.mal_id ?? 0,
+        name: actor.person?.name ?? "Unknown",
+        language: actor.language ?? "",
+        image: pickImage(actor.person?.images),
+      }));
+      return {
+        id: character?.mal_id ?? 0,
+        name: character?.name ?? "Unknown",
+        role: item.role ?? "",
+        image: pickImage(character?.images),
+        voiceActors,
+      };
+    })
+    .filter((item) => item.id > 0 || item.name !== "Unknown");
 }

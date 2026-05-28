@@ -1,4 +1,4 @@
-import type { JikanEpisode, JikanRelation, MediaType, OkamiMedia } from "./jikan";
+import type { JikanCharacter, JikanEpisode, JikanRelation, MediaType, OkamiMedia } from "./jikan";
 
 async function getJson<T>(input: RequestInfo | URL): Promise<T> {
   const response = await fetch(input, { headers: { "Content-Type": "application/json" } });
@@ -65,4 +65,11 @@ export async function fetchRelated(type: MediaType, id: number): Promise<JikanRe
   url.searchParams.set("id", String(id));
   const data = await getJson<{ related: JikanRelation[] }>(url);
   return data.related;
+}
+
+export async function fetchCharacters(id: number): Promise<JikanCharacter[]> {
+  const url = new URL("/api/jikan/characters", window.location.origin);
+  url.searchParams.set("id", String(id));
+  const data = await getJson<{ characters: JikanCharacter[] }>(url);
+  return data.characters;
 }

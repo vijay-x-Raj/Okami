@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import type { JikanEpisode, OkamiMedia } from "@/app/lib/jikan";
-import { fetchDetail, fetchEpisodes, fetchRelated } from "@/app/lib/api";
+import type { JikanCharacter, JikanEpisode, OkamiMedia } from "@/app/lib/jikan";
+import { fetchCharacters, fetchDetail, fetchEpisodes } from "@/app/lib/api";
 import {
   addEntry,
   loadEntries,
@@ -15,6 +15,13 @@ import {
 } from "@/app/lib/storage";
 
 const DEFAULT_STATUS: OkamiStatus = "plan_to_watch";
+const STATUS_OPTIONS: Array<{ value: OkamiStatus; label: string }> = [
+  { value: "watching", label: "Watching" },
+  { value: "completed", label: "Completed" },
+  { value: "on_hold", label: "On Hold" },
+  { value: "dropped", label: "Dropped" },
+  { value: "plan_to_watch", label: "Plan to Watch" },
+];
 
 function toggleSelection(current: number[], value: number) {
   if (current.includes(value)) {
@@ -52,17 +59,18 @@ export default function AnimeDetailPage() {
   const animeId = rawId ? Number(rawId) : Number.NaN;
   const [media, setMedia] = useState<OkamiMedia | null>(null);
   const [episodes, setEpisodes] = useState<JikanEpisode[]>([]);
-  const [seasonCount, setSeasonCount] = useState<number | null>(null);
+  const [characters, setCharacters] = useState<JikanCharacter[]>([]);
   const [loading, setLoading] = useState(true);
   const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
+  const [activeInfoTab, setActiveInfoTab] = useState<"overview" | "characters">("overview");
 
   const entry = useMemo(
     () => entries.find((item) => item.id === animeId && item.type === "anime"),
     [entries, animeId]
   );
 
-  const completedSeasons = entry?.completed_seasons ?? [];
   const completedEpisodes = entry?.completed_episodes ?? [];
+  const seasonStatus = entry?.status ?? DEFAULT_STATUS;
 
   const commitEntries = (next: OkamiEntry[]) => {
     saveEntries(next);
@@ -84,14 +92,13 @@ export default function AnimeDetailPage() {
     commitEntries(addEntry(entries, buildEntry(media)));
   };
 
-  const toggleSeason = (value: number) => {
-    const next = toggleSelection(completedSeasons, value);
-    applyEntryPatch({ completed_seasons: next });
-  };
-
   const toggleEpisode = (value: number) => {
     const next = toggleSelection(completedEpisodes, value);
     applyEntryPatch({ completed_episodes: next, progress: next.length });
+  };
+
+  const handleStatusChange = (value: OkamiStatus) => {
+    applyEntryPatch({ status: value });
   };
 
   useEffect(() => {
@@ -99,33 +106,30 @@ export default function AnimeDetailPage() {
 
     let active = true;
 
+    Promise.resolve().then(() => {
+      if (!active) return;
+      setLoading(true);
+      setMedia(null);
+      setEpisodes([]);
+      setCharacters([]);
+    });
+
     const load = async () => {
       try {
-        const [detail, episodeList, related] = await Promise.all([
+        const [detail, episodeList, cast] = await Promise.all([
           fetchDetail("anime", animeId),
           fetchEpisodes(animeId),
-          fetchRelated("anime", animeId),
+          fetchCharacters(animeId),
         ]);
         if (!active) return;
         setMedia(detail);
         setEpisodes(episodeList);
-
-        const sequelCount = related
-          .filter((relation) => (relation.relation ?? "").toLowerCase() === "sequel")
-          .reduce(
-            (sum, relation) =>
-              sum + (relation.entry?.filter((item) => (item.type ?? "").toLowerCase() === "anime").length ?? 0),
-            0
-          );
-        const episodeTotal = detail.episodes ?? detail.total ?? episodeList.length ?? 0;
-        const estimate = episodeTotal ? Math.max(1, Math.ceil(episodeTotal / 12)) : 1;
-        const count = Math.max(estimate, sequelCount + 1);
-        setSeasonCount(count);
+        setCharacters(cast);
       } catch {
         if (!active) return;
         setMedia(null);
         setEpisodes([]);
-        setSeasonCount(null);
+        setCharacters([]);
       } finally {
         if (active) setLoading(false);
       }
@@ -162,92 +166,69 @@ export default function AnimeDetailPage() {
         {media ? <span className="detail-page-id">MAL #{media.id}</span> : null}
       </div>
 
-      <div className="detail-page-grid">
-        <div className="detail-card">
-          {loading ? (
-            <div className="detail-empty">Loading anime details…</div>
-          ) : !media ? (
-            <div className="detail-empty">Anime details unavailable.</div>
-          ) : (
-            <>
-              <div className="detail-hero">
-                <img className="detail-hero-cover" src={media.cover} alt={media.title} />
-                <div>
-                  <div className="detail-title">{media.title}</div>
-                  <div className="detail-meta">
-                    <span>{media.year || "--"}</span>
-                    <span>•</span>
-                    <span>{media.format}</span>
-                    <span>•</span>
-                    <span>{media.total ? `${media.total} eps` : "Ongoing"}</span>
-                  </div>
-                  <div className="detail-tags">
-                    {media.genres.map((tag) => (
-                      <span className="tag" key={tag}>
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
+      <div className="detail-card detail-hero-card">
+        {loading ? (
+          <div className="detail-empty">Loading anime details…</div>
+        ) : !media ? (
+          <div className="detail-empty">Anime details unavailable.</div>
+        ) : (
+          <>
+            <div className="detail-hero">
+              <img className="detail-hero-cover" src={media.cover} alt={media.title} />
+              <div>
+                <div className="detail-title">{media.title}</div>
+                <div className="detail-meta">
+                  <span>{media.year || "--"}</span>
+                  <span>•</span>
+                  <span>{media.format}</span>
+                  <span>•</span>
+                  <span>{media.total ? `${media.total} eps` : "Ongoing"}</span>
+                </div>
+                <div className="detail-tags">
+                  {media.genres.map((tag) => (
+                    <span className="tag" key={tag}>
+                      {tag}
+                    </span>
+                  ))}
                 </div>
               </div>
-              <div className="detail-section">
-                <div className="detail-section-title">Synopsis</div>
-                <p className="detail-synopsis">{media.synopsis || "No synopsis yet."}</p>
-              </div>
-              <div className="detail-page-actions">
-                <button className="modal-btn primary" type="button" onClick={handleAdd} disabled={Boolean(entry)}>
-                  {entry ? "In Library" : "Add to Library"}
-                </button>
-                <span className="detail-score">
-                  <span className="detail-score-label">MAL Score</span>
-                  <span className="detail-score-value">
-                    {media.official_score ? media.official_score.toFixed(1) : "--"}
-                  </span>
+            </div>
+            <div className="detail-page-actions">
+              <button className="modal-btn primary" type="button" onClick={handleAdd} disabled={Boolean(entry)}>
+                {entry ? "In Library" : "Add to Library"}
+              </button>
+              <span className="detail-score">
+                <span className="detail-score-label">MAL Score</span>
+                <span className="detail-score-value">
+                  {media.official_score ? media.official_score.toFixed(1) : "--"}
                 </span>
-              </div>
-            </>
-          )}
-        </div>
+              </span>
+            </div>
+          </>
+        )}
+      </div>
 
-        <div className="detail-card">
-          <div className="detail-section">
-            <div className="detail-section-title">Season Tracking</div>
-            {seasonCount ? (
-              <>
-                <div className="tile-grid">
-                  {Array.from({ length: seasonCount }, (_, index) => {
-                    const value = index + 1;
-                    const active = completedSeasons.includes(value);
-                    return (
-                      <button
-                        key={`season-${value}`}
-                        type="button"
-                        className={`tile ${active ? "active" : ""}`}
-                        aria-pressed={active}
-                        onClick={() => toggleSeason(value)}
-                        disabled={!entry}
-                      >
-                        S{String(value).padStart(2, "0")}
-                      </button>
-                    );
-                  })}
-                </div>
-                <span className="field-help">
-                  {completedSeasons.length} / {seasonCount} seasons marked complete.
-                </span>
-              </>
-            ) : (
-              <div className="detail-empty">Season count unavailable.</div>
-            )}
-            {!entry ? <div className="detail-empty">Add this anime to start tracking.</div> : null}
-          </div>
+      <div className="detail-card detail-synopsis-card">
+        {loading ? (
+          <div className="detail-empty">Loading synopsis…</div>
+        ) : !media ? (
+          <div className="detail-empty">Synopsis unavailable.</div>
+        ) : (
+          <>
+            <div className="detail-section-title">Synopsis</div>
+            <p className="detail-synopsis">{media.synopsis || "No synopsis yet."}</p>
+          </>
+        )}
+      </div>
 
+      <div className="detail-lower-grid">
+        <div className="detail-card detail-episodes-card">
           <div className="detail-section">
             <div className="detail-section-title">Episode Tracking</div>
             {episodes.length === 0 ? (
               <div className="detail-empty">Episode list unavailable.</div>
             ) : (
-              <div className="episode-list">
+              <div className="episode-list custom-scroll">
                 {episodes.map((episode, index) => {
                   const value = index + 1;
                   const active = completedEpisodes.includes(value);
@@ -263,6 +244,7 @@ export default function AnimeDetailPage() {
                       <span className="episode-title">
                         {episode.title || episode.title_english || episode.title_japanese || `Episode ${value}`}
                       </span>
+                      <span className="episode-meta">{episode.duration || ""}</span>
                       <span className="episode-toggle">{active ? "✓" : ""}</span>
                     </button>
                   );
@@ -270,6 +252,122 @@ export default function AnimeDetailPage() {
               </div>
             )}
             {!entry ? <div className="detail-empty">Add this anime to mark episodes.</div> : null}
+          </div>
+        </div>
+
+        <div className="detail-card detail-info-card">
+          <div className="detail-tabs">
+            <button
+              className={`detail-tab ${activeInfoTab === "overview" ? "active" : ""}`}
+              type="button"
+              onClick={() => setActiveInfoTab("overview")}
+            >
+              Overview
+            </button>
+            <button
+              className={`detail-tab ${activeInfoTab === "characters" ? "active" : ""}`}
+              type="button"
+              onClick={() => setActiveInfoTab("characters")}
+            >
+              Characters
+            </button>
+          </div>
+
+          <div className="detail-info-body custom-scroll">
+            {activeInfoTab === "overview" ? (
+              <div className="detail-section">
+                <div className="detail-section-title">Overview</div>
+                {media ? (
+                  <div className="detail-info-grid">
+                    <div className="info-item">
+                      <span className="info-label">Format</span>
+                      <span className="info-value">{media.format}</span>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-label">Episodes</span>
+                      <span className="info-value">{media.total ? String(media.total) : "Ongoing"}</span>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-label">Year</span>
+                      <span className="info-value">{media.year || "--"}</span>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-label">Studio</span>
+                      <span className="info-value">{media.studios?.[0] || "--"}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="detail-empty">Overview unavailable.</div>
+                )}
+                <div className="detail-section">
+                  <div className="detail-section-title">Season Status</div>
+                  <div className="status-button-row" role="group" aria-label="Season status">
+                    {STATUS_OPTIONS.map((option) => {
+                      const active = seasonStatus === option.value;
+                      const statusClass = option.value.replace(/_/g, "-");
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`status-button status-${statusClass} ${active ? "active" : ""}`}
+                          aria-pressed={active}
+                          onClick={() => handleStatusChange(option.value)}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {!entry ? <div className="detail-empty">Status changes will add this anime to your library.</div> : null}
+                </div>
+              </div>
+            ) : (
+              <div className="detail-section">
+                <div className="detail-section-title">Characters & Voice Actors</div>
+                {loading ? (
+                  <div className="detail-empty">Loading cast…</div>
+                ) : characters.length === 0 ? (
+                  <div className="detail-empty">No cast data available.</div>
+                ) : (
+                  <div className="cast-list">
+                    {characters.slice(0, 12).map((character) => (
+                      <div className="cast-card" key={character.id || character.name}>
+                        <div className="cast-character">
+                          {character.image ? (
+                            <img className="cast-avatar" src={character.image} alt={character.name} />
+                          ) : (
+                            <div className="cast-avatar fallback">{character.name.slice(0, 1)}</div>
+                          )}
+                          <div>
+                            <div className="cast-name">{character.name}</div>
+                            <div className="cast-role">{character.role || "Character"}</div>
+                          </div>
+                        </div>
+                        <div className="cast-actors">
+                          {character.voiceActors.length === 0 ? (
+                            <div className="cast-empty">No voice actor listed.</div>
+                          ) : (
+                            character.voiceActors.slice(0, 2).map((actor, index) => (
+                              <div className="cast-actor" key={`${character.id}-va-${index}`}>
+                                {actor.image ? (
+                                  <img className="cast-avatar" src={actor.image} alt={actor.name} />
+                                ) : (
+                                  <div className="cast-avatar fallback">{actor.name.slice(0, 1)}</div>
+                                )}
+                                <div>
+                                  <div className="cast-name">{actor.name}</div>
+                                  <div className="cast-role">{actor.language || "Voice Actor"}</div>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
