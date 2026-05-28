@@ -114,7 +114,7 @@ function useDebounce<T>(value: T, delay: number) {
   return debounced;
 }
 
-function useOutsideClick(ref: RefObject<HTMLElement | null>, onClose: () => void) {
+function useOutsideClick<T extends HTMLElement>(ref: RefObject<T>, onClose: () => void) {
   useEffect(() => {
     function handleMouseDown(event: MouseEvent) {
       if (ref.current && !ref.current.contains(event.target as Node)) {
