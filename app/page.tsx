@@ -716,7 +716,7 @@ function ExploreView({
         if (!active) return;
         setTopAnime(anime);
         setTopManga(manga);
-        setSeasonal(season);
+        setSeasonal(season.filter((item, index, self) => index === self.findIndex((t) => t.id === item.id)));
       })
       .catch(() => {
         if (!active) return;
@@ -945,10 +945,14 @@ function ExploreView({
             </div>
             <div className="strip-cards">
               {(seasonal.length ? seasonal : []).slice(0, 8).map((item) => (
-                <div className="strip-card" key={item.id}>
-                  <div className="strip-card-title">{item.title}</div>
-                  <div className="strip-card-tag">{item.genres[0] || "Season"}</div>
-                </div>
+                <button className="strip-card" type="button" key={item.id} onClick={() => onDetail(item)}>
+                  <img src={item.cover} alt={item.title} className="strip-card-cover" />
+                  <div className="strip-card-overlay" />
+                  <div className="strip-card-content">
+                    <div className="strip-card-title">{item.title}</div>
+                    <div className="strip-card-tag">{item.genres[0] || "Season"}</div>
+                  </div>
+                </button>
               ))}
               {loadingTop && seasonal.length === 0 ? <div className="strip-card">Loading…</div> : null}
             </div>
@@ -963,10 +967,14 @@ function ExploreView({
             </div>
             <div className="strip-cards">
               {topAnime.slice(0, 8).map((item) => (
-                <div className="strip-card" key={item.id}>
-                  <div className="strip-card-title">{item.title}</div>
-                  <div className="strip-card-tag">Top Anime</div>
-                </div>
+                <button className="strip-card" type="button" key={item.id} onClick={() => onDetail(item)}>
+                  <img src={item.cover} alt={item.title} className="strip-card-cover" />
+                  <div className="strip-card-overlay" />
+                  <div className="strip-card-content">
+                    <div className="strip-card-title">{item.title}</div>
+                    <div className="strip-card-tag">Top Anime</div>
+                  </div>
+                </button>
               ))}
               {loadingTop && topAnime.length === 0 ? <div className="strip-card">Loading…</div> : null}
             </div>
@@ -981,10 +989,14 @@ function ExploreView({
             </div>
             <div className="strip-cards">
               {topManga.slice(0, 8).map((item) => (
-                <div className="strip-card" key={item.id}>
-                  <div className="strip-card-title">{item.title}</div>
-                  <div className="strip-card-tag">Top Manga</div>
-                </div>
+                <button className="strip-card" type="button" key={item.id} onClick={() => onDetail(item)}>
+                  <img src={item.cover} alt={item.title} className="strip-card-cover" />
+                  <div className="strip-card-overlay" />
+                  <div className="strip-card-content">
+                    <div className="strip-card-title">{item.title}</div>
+                    <div className="strip-card-tag">Top Manga</div>
+                  </div>
+                </button>
               ))}
               {loadingTop && topManga.length === 0 ? <div className="strip-card">Loading…</div> : null}
             </div>
@@ -1349,7 +1361,6 @@ function AddEntryModal({
     status: OkamiStatus;
     userScore: number | null;
     notes: string;
-    completedSeasons: number[];
     completedVolumes: number[];
   }) => void;
 }) {
@@ -1358,9 +1369,7 @@ function AddEntryModal({
   const [status, setStatus] = useState<OkamiStatus>(() => entry?.status ?? "plan_to_watch");
   const [userScore, setUserScore] = useState<number | null>(() => entry?.user_score ?? null);
   const [notes, setNotes] = useState(() => entry?.notes ?? "");
-  const [seasonCount, setSeasonCount] = useState<number | null>(null);
   const [volumeCount, setVolumeCount] = useState<number | null>(null);
-  const [selectedSeasons, setSelectedSeasons] = useState<number[]>(() => entry?.completed_seasons ?? []);
   const [selectedVolumes, setSelectedVolumes] = useState<number[]>(() => entry?.completed_volumes ?? []);
   const [countsLoading, setCountsLoading] = useState(Boolean(media));
 
@@ -1377,35 +1386,21 @@ function AddEntryModal({
     let active = true;
 
     const loadCounts = async () => {
+      if (media.type !== "manga") {
+        setCountsLoading(false);
+        return;
+      }
       try {
         const detail = await fetchDetail(media.type, media.id);
         if (!active) return;
-        if (media.type === "manga") {
-          const count = detail.volumes ?? null;
-          const safeCount = count && count > 0 ? count : null;
-          setVolumeCount(safeCount);
-          if (safeCount) {
-            setSelectedVolumes((current) => current.filter((value) => value <= safeCount));
-          }
-        } else {
-          const related = await fetchRelated("anime", media.id);
-          if (!active) return;
-          const sequelCount = related
-            .filter((relation) => (relation.relation ?? "").toLowerCase() === "sequel")
-            .reduce(
-              (sum, relation) =>
-                sum + (relation.entry?.filter((item) => (item.type ?? "").toLowerCase() === "anime").length ?? 0),
-              0
-            );
-          const episodes = detail.episodes ?? detail.total ?? 0;
-          const estimated = episodes ? Math.max(1, Math.ceil(episodes / 12)) : 1;
-          const count = Math.max(estimated, sequelCount + 1);
-          setSeasonCount(count);
-          setSelectedSeasons((current) => current.filter((value) => value <= count));
+        const count = detail.volumes ?? null;
+        const safeCount = count && count > 0 ? count : null;
+        setVolumeCount(safeCount);
+        if (safeCount) {
+          setSelectedVolumes((current) => current.filter((value) => value <= safeCount));
         }
       } catch {
         if (!active) return;
-        setSeasonCount(null);
         setVolumeCount(null);
       } finally {
         if (active) setCountsLoading(false);
@@ -1452,39 +1447,7 @@ function AddEntryModal({
               ))}
             </select>
           </label>
-          {media.type === "anime" ? (
-            <div className="field">
-              <span className="field-label">Seasons Completed</span>
-              {countsLoading ? (
-                <span className="field-help">Loading season count…</span>
-              ) : seasonCount ? (
-                <>
-                  <div className="tile-grid">
-                    {Array.from({ length: seasonCount }, (_, index) => {
-                      const value = index + 1;
-                      const active = selectedSeasons.includes(value);
-                      return (
-                        <button
-                          key={`season-${value}`}
-                          type="button"
-                          className={`tile ${active ? "active" : ""}`}
-                          aria-pressed={active}
-                          onClick={() => setSelectedSeasons((current) => toggleSelection(current, value))}
-                        >
-                          S{String(value).padStart(2, "0")}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <span className="field-help">
-                    {selectedSeasons.length} / {seasonCount} seasons marked complete.
-                  </span>
-                </>
-              ) : (
-                <span className="field-help">Season count unavailable.</span>
-              )}
-            </div>
-          ) : null}
+
           {media.type === "manga" ? (
             <div className="field">
               <span className="field-label">Volumes Completed</span>
@@ -1550,7 +1513,6 @@ function AddEntryModal({
                 status,
                 userScore,
                 notes,
-                completedSeasons: selectedSeasons,
                 completedVolumes: selectedVolumes,
               })
             }
@@ -1962,7 +1924,6 @@ export default function Home() {
     status: OkamiStatus;
     userScore: number | null;
     notes: string;
-    completedSeasons: number[];
     completedVolumes: number[];
   }) => {
     if (!modalState) return;
@@ -1981,7 +1942,7 @@ export default function Home() {
       status: data.status,
       progress: entry?.progress ?? 0,
       total: media.total ?? null,
-      completed_seasons: data.completedSeasons,
+      completed_seasons: entry?.completed_seasons ?? [],
       completed_volumes: data.completedVolumes,
       completed_episodes: entry?.completed_episodes ?? [],
       date_added: entry?.date_added ?? now,
