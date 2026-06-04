@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { JikanEpisode, JikanRelation, MediaType, OkamiMedia } from "./lib/jikan";
 import { fetchDetail, fetchEpisodes, fetchRelated, fetchSeason, fetchTop, fetchVolumes, searchMedia } from "./lib/api";
@@ -394,6 +395,7 @@ function LibraryView({
   onToggleFavourite,
   onExplore,
   onClearFilters,
+  onOpenTracker,
 }: {
   entries: OkamiEntry[];
   activeView: "grid" | "list";
@@ -412,6 +414,7 @@ function LibraryView({
   onToggleFavourite: (entry: OkamiEntry) => void;
   onExplore: () => void;
   onClearFilters: () => void;
+  onOpenTracker: (entry: OkamiEntry) => void;
 }) {
   const displayedEntries = useMemo(() => {
     let result = [...entries];
@@ -601,17 +604,46 @@ function LibraryView({
         <div className="grid library-grid">
           {displayedEntries.map((entry) => {
             const category = entryCategory(entry);
+            const isAnime = entry.type === "anime";
             return (
               <article className="card" key={entryKey(entry)}>
-                <div className="card-img-wrap">
+                <div
+                  className="card-img-wrap"
+                  role={isAnime ? "button" : undefined}
+                  tabIndex={isAnime ? 0 : undefined}
+                  onClick={() => {
+                    if (isAnime) onOpenTracker(entry);
+                  }}
+                  onKeyDown={(event) => {
+                    if (!isAnime) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onOpenTracker(entry);
+                    }
+                  }}
+                >
                   <img className="card-img" src={entry.cover} alt={entry.title} />
                   <div className="card-img-overlay" />
                   <div className="card-actions">
-                    <button className="card-action-btn" type="button" onClick={() => onEdit(entry)}>
+                    <button
+                      className="card-action-btn"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onEdit(entry);
+                      }}
+                    >
                       Update
                     </button>
-                    <button className="card-action-btn" type="button" onClick={() => onDetail(entryToMedia(entry))}>
-                      Detail
+                    <button
+                      className="card-action-btn"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDetail(entryToMedia(entry));
+                      }}
+                    >
+                      Info
                     </button>
                   </div>
                   <div className={`score-badge ${entry.official_score >= 9 ? "gold" : ""}`}>
@@ -620,7 +652,13 @@ function LibraryView({
                   <div className={`status-badge ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</div>
                 </div>
                 <div className="card-info">
-                  <div className="card-title">{entry.title}</div>
+                  {entry.type === "anime" ? (
+                    <Link className="card-title" href={`/anime/${entry.id}/info`}>
+                      {entry.title}
+                    </Link>
+                  ) : (
+                    <div className="card-title">{entry.title}</div>
+                  )}
                   <div className="card-meta">
                     <span className={`type-chip ${category.className}`}>{category.label}</span>
                     <span className="meta-dot">•</span>
@@ -655,8 +693,20 @@ function LibraryView({
                 className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${entry.status === "watching" ? "row-watching" : ""}`}
               >
                 <span className="mono">{String(index + 1).padStart(2, "0")}</span>
-                <img className="row-cover" src={entry.cover} alt={entry.title} />
-                <span className="title-cell">{entry.title}</span>
+                {entry.type === "anime" ? (
+                  <Link aria-label={`Open tracker for ${entry.title}`} href={`/anime/${entry.id}`}>
+                    <img className="row-cover" src={entry.cover} alt={entry.title} />
+                  </Link>
+                ) : (
+                  <img className="row-cover" src={entry.cover} alt={entry.title} />
+                )}
+                {entry.type === "anime" ? (
+                  <Link className="title-cell" href={`/anime/${entry.id}/info`}>
+                    {entry.title}
+                  </Link>
+                ) : (
+                  <span className="title-cell">{entry.title}</span>
+                )}
                 <span className={`type-chip ${category.className}`}>{category.label}</span>
                 <span className="mono">{entry.user_score ?? "--"}</span>
                 <span className="mono">{formatScore(entry.official_score)}</span>
@@ -716,7 +766,7 @@ function ExploreView({
         if (!active) return;
         setTopAnime(anime);
         setTopManga(manga);
-        setSeasonal(season.filter((item, index, self) => index === self.findIndex((t) => t.id === item.id)));
+        setSeasonal(season);
       })
       .catch(() => {
         if (!active) return;
@@ -759,8 +809,9 @@ function ExploreView({
     };
   }, [debouncedQuery, activeGenres, activeSeason, activeStudio, activeType, genreIds, shouldSearch]);
 
-  const featured = seasonal[0];
-  const heroSide = seasonal.slice(1, 3);
+  const featured = seasonal[0] ?? topAnime[0];
+  const heroSide = (seasonal.length ? seasonal.slice(1, 3) : topAnime.slice(1, 3));
+  const seasonalList = seasonal.length ? seasonal : topAnime;
   const searchResults = shouldSearch ? results : [];
   const searchLoading = shouldSearch ? loadingSearch : false;
 
@@ -895,6 +946,18 @@ function ExploreView({
           <div className="hero-grid">
             <div
               className="hero-main"
+              role={featured ? "button" : undefined}
+              tabIndex={featured ? 0 : undefined}
+              onClick={() => {
+                if (featured) onDetail(featured);
+              }}
+              onKeyDown={(event) => {
+                if (!featured) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onDetail(featured);
+                }
+              }}
               style={{
                 backgroundImage: `url(${featured?.cover || "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&q=80"})`,
               }}
@@ -910,21 +973,47 @@ function ExploreView({
                     </span>
                   ))}
                 </div>
-                <button className="hero-btn" type="button" onClick={() => featured && onAdd(featured)}>
+                <button
+                  className="hero-btn"
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (featured) onAdd(featured);
+                  }}
+                >
                   + Add to Library
                 </button>
               </div>
             </div>
             <div className="hero-side">
               {(heroSide.length ? heroSide : []).map((item) => (
-                <div className="hero-mini" key={item.id}>
+                <div
+                  className="hero-mini"
+                  key={item.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onDetail(item)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onDetail(item);
+                    }
+                  }}
+                >
                   <img src={item.cover} alt={item.title} />
                   <div className="hero-mini-content">
                     <div className="hero-mini-title">{item.title}</div>
                     <div className="hero-mini-tags">
                       <span className="tag">{item.genres[0] || "Feature"}</span>
                     </div>
-                    <button className="hero-mini-btn" type="button" onClick={() => onAdd(item)}>
+                    <button
+                      className="hero-mini-btn"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onAdd(item);
+                      }}
+                    >
                       + Add
                     </button>
                   </div>
@@ -944,15 +1033,23 @@ function ExploreView({
               </button>
             </div>
             <div className="strip-cards">
-              {(seasonal.length ? seasonal : []).slice(0, 8).map((item) => (
-                <button className="strip-card" type="button" key={item.id} onClick={() => onDetail(item)}>
-                  <img src={item.cover} alt={item.title} className="strip-card-cover" />
-                  <div className="strip-card-overlay" />
-                  <div className="strip-card-content">
-                    <div className="strip-card-title">{item.title}</div>
-                    <div className="strip-card-tag">{item.genres[0] || "Season"}</div>
-                  </div>
-                </button>
+              {seasonalList.slice(0, 8).map((item) => (
+                <div
+                  className="strip-card"
+                  key={item.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onDetail(item)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onDetail(item);
+                    }
+                  }}
+                >
+                  <div className="strip-card-title">{item.title}</div>
+                  <div className="strip-card-tag">{item.genres[0] || "Season"}</div>
+                </div>
               ))}
               {loadingTop && seasonal.length === 0 ? <div className="strip-card">Loading…</div> : null}
             </div>
@@ -967,14 +1064,22 @@ function ExploreView({
             </div>
             <div className="strip-cards">
               {topAnime.slice(0, 8).map((item) => (
-                <button className="strip-card" type="button" key={item.id} onClick={() => onDetail(item)}>
-                  <img src={item.cover} alt={item.title} className="strip-card-cover" />
-                  <div className="strip-card-overlay" />
-                  <div className="strip-card-content">
-                    <div className="strip-card-title">{item.title}</div>
-                    <div className="strip-card-tag">Top Anime</div>
-                  </div>
-                </button>
+                <div
+                  className="strip-card"
+                  key={item.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onDetail(item)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onDetail(item);
+                    }
+                  }}
+                >
+                  <div className="strip-card-title">{item.title}</div>
+                  <div className="strip-card-tag">Top Anime</div>
+                </div>
               ))}
               {loadingTop && topAnime.length === 0 ? <div className="strip-card">Loading…</div> : null}
             </div>
@@ -989,14 +1094,22 @@ function ExploreView({
             </div>
             <div className="strip-cards">
               {topManga.slice(0, 8).map((item) => (
-                <button className="strip-card" type="button" key={item.id} onClick={() => onDetail(item)}>
-                  <img src={item.cover} alt={item.title} className="strip-card-cover" />
-                  <div className="strip-card-overlay" />
-                  <div className="strip-card-content">
-                    <div className="strip-card-title">{item.title}</div>
-                    <div className="strip-card-tag">Top Manga</div>
-                  </div>
-                </button>
+                <div
+                  className="strip-card"
+                  key={item.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onDetail(item)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onDetail(item);
+                    }
+                  }}
+                >
+                  <div className="strip-card-title">{item.title}</div>
+                  <div className="strip-card-tag">Top Manga</div>
+                </div>
               ))}
               {loadingTop && topManga.length === 0 ? <div className="strip-card">Loading…</div> : null}
             </div>
@@ -1025,18 +1138,42 @@ function ExploreView({
             <div className="grid results-grid">
               {searchResults.map((item) => {
                 const inLibrary = entryMap.has(mediaKey(item));
+                const isAnime = item.type === "anime";
                 return (
                   <article className="card" key={mediaKey(item)}>
-                    <div className="card-img-wrap">
+                    <div
+                      className="card-img-wrap"
+                      role={isAnime ? "button" : undefined}
+                      tabIndex={isAnime ? 0 : undefined}
+                      onClick={() => {
+                        if (isAnime) onDetail(item);
+                      }}
+                      onKeyDown={(event) => {
+                        if (!isAnime) return;
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onDetail(item);
+                        }
+                      }}
+                    >
                       <img className="card-img" src={item.cover} alt={item.title} />
                       <div className="card-img-overlay" />
                       <div className="card-actions">
                         <button
-                          className={`card-action-btn ${inLibrary ? "in-library" : "primary"}`}
+                          className={`card-action-btn ${isAnime ? "primary" : inLibrary ? "in-library" : "primary"}`}
                           type="button"
-                          onClick={() => (inLibrary ? onDetail(item) : onAdd(item))}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (isAnime) {
+                              onDetail(item);
+                            } else if (inLibrary) {
+                              onDetail(item);
+                            } else {
+                              onAdd(item);
+                            }
+                          }}
                         >
-                          {inLibrary ? "In Library ✓" : "+ Add to Library"}
+                          {isAnime ? "View Info" : inLibrary ? "In Library ✓" : "+ Add to Library"}
                         </button>
                       </div>
                       <div className={`score-badge ${item.official_score >= 9 ? "gold" : ""}`}>
@@ -1044,7 +1181,13 @@ function ExploreView({
                       </div>
                     </div>
                     <div className="card-info">
-                      <div className="card-title">{item.title}</div>
+                      {isAnime ? (
+                        <Link className="card-title" href={`/anime/${item.id}/info`}>
+                          {item.title}
+                        </Link>
+                      ) : (
+                        <div className="card-title">{item.title}</div>
+                      )}
                       <div className="card-meta">
                         <span>{item.year || "--"}</span> • {item.format}
                       </div>
@@ -1361,6 +1504,7 @@ function AddEntryModal({
     status: OkamiStatus;
     userScore: number | null;
     notes: string;
+    completedSeasons: number[];
     completedVolumes: number[];
   }) => void;
 }) {
@@ -1369,7 +1513,9 @@ function AddEntryModal({
   const [status, setStatus] = useState<OkamiStatus>(() => entry?.status ?? "plan_to_watch");
   const [userScore, setUserScore] = useState<number | null>(() => entry?.user_score ?? null);
   const [notes, setNotes] = useState(() => entry?.notes ?? "");
+  const [seasonCount, setSeasonCount] = useState<number | null>(null);
   const [volumeCount, setVolumeCount] = useState<number | null>(null);
+  const [selectedSeasons, setSelectedSeasons] = useState<number[]>(() => entry?.completed_seasons ?? []);
   const [selectedVolumes, setSelectedVolumes] = useState<number[]>(() => entry?.completed_volumes ?? []);
   const [countsLoading, setCountsLoading] = useState(Boolean(media));
 
@@ -1386,21 +1532,35 @@ function AddEntryModal({
     let active = true;
 
     const loadCounts = async () => {
-      if (media.type !== "manga") {
-        setCountsLoading(false);
-        return;
-      }
       try {
         const detail = await fetchDetail(media.type, media.id);
         if (!active) return;
-        const count = detail.volumes ?? null;
-        const safeCount = count && count > 0 ? count : null;
-        setVolumeCount(safeCount);
-        if (safeCount) {
-          setSelectedVolumes((current) => current.filter((value) => value <= safeCount));
+        if (media.type === "manga") {
+          const count = detail.volumes ?? null;
+          const safeCount = count && count > 0 ? count : null;
+          setVolumeCount(safeCount);
+          if (safeCount) {
+            setSelectedVolumes((current) => current.filter((value) => value <= safeCount));
+          }
+        } else {
+          const related = await fetchRelated("anime", media.id);
+          if (!active) return;
+          const sequelCount = related
+            .filter((relation) => (relation.relation ?? "").toLowerCase() === "sequel")
+            .reduce(
+              (sum, relation) =>
+                sum + (relation.entry?.filter((item) => (item.type ?? "").toLowerCase() === "anime").length ?? 0),
+              0
+            );
+          const episodes = detail.episodes ?? detail.total ?? 0;
+          const estimated = episodes ? Math.max(1, Math.ceil(episodes / 12)) : 1;
+          const count = Math.max(estimated, sequelCount + 1);
+          setSeasonCount(count);
+          setSelectedSeasons((current) => current.filter((value) => value <= count));
         }
       } catch {
         if (!active) return;
+        setSeasonCount(null);
         setVolumeCount(null);
       } finally {
         if (active) setCountsLoading(false);
@@ -1447,7 +1607,39 @@ function AddEntryModal({
               ))}
             </select>
           </label>
-
+          {media.type === "anime" ? (
+            <div className="field">
+              <span className="field-label">Seasons Completed</span>
+              {countsLoading ? (
+                <span className="field-help">Loading season count…</span>
+              ) : seasonCount ? (
+                <>
+                  <div className="tile-grid">
+                    {Array.from({ length: seasonCount }, (_, index) => {
+                      const value = index + 1;
+                      const active = selectedSeasons.includes(value);
+                      return (
+                        <button
+                          key={`season-${value}`}
+                          type="button"
+                          className={`tile ${active ? "active" : ""}`}
+                          aria-pressed={active}
+                          onClick={() => setSelectedSeasons((current) => toggleSelection(current, value))}
+                        >
+                          S{String(value).padStart(2, "0")}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <span className="field-help">
+                    {selectedSeasons.length} / {seasonCount} seasons marked complete.
+                  </span>
+                </>
+              ) : (
+                <span className="field-help">Season count unavailable.</span>
+              )}
+            </div>
+          ) : null}
           {media.type === "manga" ? (
             <div className="field">
               <span className="field-label">Volumes Completed</span>
@@ -1513,6 +1705,7 @@ function AddEntryModal({
                 status,
                 userScore,
                 notes,
+                completedSeasons: selectedSeasons,
                 completedVolumes: selectedVolumes,
               })
             }
@@ -1733,8 +1926,8 @@ function DetailPanel({
             {inLibrary ? "Update Entry" : "Add to Library"}
           </button>
           {media.type === "anime" ? (
-            <Link className="modal-btn ghost" href={`/anime/${media.id}`}>
-              Open Tracking Page
+            <Link className="modal-btn ghost" href={`/anime/${media.id}/info`}>
+              Open Info Page
             </Link>
           ) : null}
         </div>
@@ -1862,6 +2055,7 @@ function DetailPanel({
 }
 
 export default function Home() {
+  const router = useRouter();
   const [activeNav, setActiveNav] = useState("Library");
   const [activeTab, setActiveTab] = useState("Anime");
   const [activeView, setActiveView] = useState<"grid" | "list">("grid");
@@ -1924,6 +2118,7 @@ export default function Home() {
     status: OkamiStatus;
     userScore: number | null;
     notes: string;
+    completedSeasons: number[];
     completedVolumes: number[];
   }) => {
     if (!modalState) return;
@@ -1942,7 +2137,7 @@ export default function Home() {
       status: data.status,
       progress: entry?.progress ?? 0,
       total: media.total ?? null,
-      completed_seasons: entry?.completed_seasons ?? [],
+      completed_seasons: data.completedSeasons,
       completed_volumes: data.completedVolumes,
       completed_episodes: entry?.completed_episodes ?? [],
       date_added: entry?.date_added ?? now,
@@ -1997,6 +2192,19 @@ export default function Home() {
     } catch {
       setModalState(null);
     }
+  };
+
+  const openInfo = (media: OkamiMedia) => {
+    if (media.type === "anime") {
+      router.push(`/anime/${media.id}/info`);
+      return;
+    }
+    openDetail(media);
+  };
+
+  const openTracker = (entry: OkamiEntry) => {
+    if (entry.type !== "anime") return;
+    router.push(`/anime/${entry.id}`);
   };
 
   const handleExport = () => {
@@ -2140,19 +2348,20 @@ export default function Home() {
                   setActiveStatus={setActiveStatus}
                   sortBy={sortBy}
                   setSortBy={setSortBy}
-                  onDetail={openDetail}
+                  onDetail={openInfo}
                   onEdit={(entry) => setModalState({ media: entryToMedia(entry), entry })}
                   onRemove={handleRemoveEntry}
                   onToggleFavourite={handleToggleFavourite}
                   onExplore={() => setActiveNav("Explore")}
                   onClearFilters={clearLibraryFilters}
+                  onOpenTracker={openTracker}
                 />
               ) : null}
               {activeNav === "Explore" ? (
                 <ExploreView
                   entryMap={entryMap}
                   onAdd={(media) => setModalState({ media })}
-                  onDetail={openDetail}
+                  onDetail={openInfo}
                 />
               ) : null}
               {activeNav === "My List" ? (
