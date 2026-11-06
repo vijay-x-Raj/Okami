@@ -2771,6 +2771,186 @@ body::after {
   background: var(--surface-3);
 }
 
+/* ── MyList Interactive Score Cell & Popover ── */
+.mylist-score-cell-wrap {
+  position: relative;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.mylist-score-chip {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  color: var(--text-2);
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 58px;
+  user-select: none;
+}
+
+.mylist-score-chip:hover {
+  border-color: var(--gold);
+  background: var(--surface-3);
+  color: var(--text-1);
+  transform: translateY(-1px);
+}
+
+.mylist-score-chip.has-score {
+  background: rgba(196, 168, 79, 0.12);
+  border-color: rgba(196, 168, 79, 0.45);
+  color: var(--gold);
+}
+
+.mylist-score-chip.has-score:hover {
+  background: rgba(196, 168, 79, 0.22);
+  border-color: var(--gold);
+  box-shadow: 0 0 10px rgba(196, 168, 79, 0.35);
+}
+
+.mylist-score-chip.no-score {
+  color: var(--text-3);
+  border-style: dashed;
+}
+
+.mylist-score-chip.no-score:hover {
+  color: var(--gold);
+  border-color: rgba(196, 168, 79, 0.6);
+  border-style: solid;
+}
+
+.mylist-score-chip .score-star {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.mylist-score-chip .score-val {
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* Interactive Score Popover Dropdown */
+.mylist-score-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 175px;
+  background: rgba(23, 23, 31, 0.96);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-hi);
+  border-radius: 6px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  z-index: 1200;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: scorePopoverIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes scorePopoverIn {
+  from { opacity: 0; transform: translate(-50%, -6px) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+.score-popover-header {
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--gold);
+  padding: 4px 6px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.score-popover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.score-popover-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 11px;
+  color: var(--text-2);
+  transition: all 0.1s ease;
+  width: 100%;
+  text-align: left;
+}
+
+.score-popover-item:hover {
+  background: var(--surface-3);
+  color: #fff;
+}
+
+.score-popover-item.active {
+  background: rgba(196, 168, 79, 0.2);
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.score-popover-item .score-num {
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.score-popover-item .score-desc {
+  font-size: 10px;
+  color: var(--text-3);
+  letter-spacing: 0.5px;
+}
+
+.score-popover-item:hover .score-desc {
+  color: var(--text-2);
+}
+
+.score-popover-clear {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  color: var(--text-3);
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.1s ease;
+}
+
+.score-popover-clear:hover {
+  color: var(--accent);
+  background: rgba(232, 25, 75, 0.08);
+}
+
 .mylist-table-stepper {
   display: inline-flex;
   align-items: center;

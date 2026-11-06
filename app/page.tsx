@@ -126,6 +126,19 @@ const sortOptions = [
   "Year",
 ] as const;
 
+const scoreLabels: Record<number, string> = {
+  10: "Masterpiece",
+  9: "Great",
+  8: "Very Good",
+  7: "Good",
+  6: "Fine",
+  5: "Average",
+  4: "Bad",
+  3: "Very Bad",
+  2: "Horrible",
+  1: "Appalling",
+};
+
 const _GENRE_MAP: Record<string, number> = {
   action: 1,
   adventure: 2,
@@ -263,6 +276,22 @@ function buildUnifiedLibraryItems(
       (e) => e.id === activeMalId || e.id === franchise.rootMalId
     );
 
+    const franchiseSeason =
+      displayInfo.mediaType === "manga"
+        ? (franchise.manga?.series?.[activeMalId] || franchise.manga?.series?.[franchise.rootMalId])
+        : (franchise.anime?.seasons?.[activeMalId] || franchise.anime?.seasons?.[franchise.rootMalId]);
+
+    const franchiseUserScore =
+      franchiseSeason?.score && franchiseSeason.score > 0 ? franchiseSeason.score : null;
+
+    const resolvedUserScore =
+      (matchingEntry?.user_score && matchingEntry.user_score > 0 ? matchingEntry.user_score : null) ??
+      franchiseUserScore ??
+      null;
+
+    const resolvedOfficialScore =
+      matchingEntry?.official_score || 0;
+
     items.push({
       id: franchise.franchiseId,
       rootMalId: franchise.rootMalId,
@@ -273,8 +302,8 @@ function buildUnifiedLibraryItems(
       format: matchingEntry?.format || (displayInfo.mediaType === "manga" ? "Manga" : "TV Series"),
       year: matchingEntry?.year || 0,
       genres: franchise.genres?.length ? franchise.genres : matchingEntry?.genres || [],
-      official_score: matchingEntry?.official_score || 0,
-      user_score: matchingEntry?.user_score ?? null,
+      official_score: resolvedOfficialScore,
+      user_score: resolvedUserScore,
       status: displayInfo.overallStatus,
       progressLabel: displayInfo.progressLabel || "--",
       progressNum: matchingEntry?.progress || displayInfo.totalProgress || 0,
@@ -328,53 +357,92 @@ function buildUnifiedLibraryItems(
   return items;
 }
 
-function ScoreCell({
-  entry,
-  editingKey,
-  setEditingKey,
-  onCommit,
-  entries,
+function MyListScoreCell({
+  score,
+  onUpdateScore,
 }: {
-  entry: OkamiEntry;
-  editingKey: string | null;
-  setEditingKey: (value: string | null) => void;
-  onCommit: (next: OkamiEntry[]) => void;
-  entries: OkamiEntry[];
+  score: number | null;
+  onUpdateScore: (newScore: number | null) => void;
 }) {
-  const key = entryKey(entry);
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  if (editingKey === key) {
-    return (
-      <input
-        className="inline-input"
-        type="number"
-        min={1}
-        max={10}
-        step={0.5}
-        defaultValue={entry.user_score ?? ""}
-        autoFocus
-        onBlur={(event) => {
-          const value = Number(event.target.value);
-          if (Number.isFinite(value) && value >= 1 && value <= 10) {
-            onCommit(updateEntry(entries, entry.id, entry.type, { user_score: value }));
-          }
-          setEditingKey(null);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") setEditingKey(null);
-        }}
-      />
-    );
-  }
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsOpen(false);
+    };
+    document.addEventListener("mousedown", handleDown);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleDown);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [isOpen]);
+
+  const hasScore = typeof score === "number" && score > 0;
 
   return (
-    <span
-      className={`score-chip ${entry.user_score ? "score-active" : ""}`}
-      onClick={() => setEditingKey(key)}
-    >
-      {entry.user_score ?? "--"}
-    </span>
+    <div className="mylist-score-cell-wrap" ref={containerRef}>
+      <button
+        type="button"
+        className={`mylist-score-chip ${hasScore ? "has-score" : "no-score"}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen((prev) => !prev);
+        }}
+        title={
+          hasScore
+            ? `★ ${score}/10 — ${scoreLabels[score] || "Rated"} (Click to edit)`
+            : "Click to set your rating (1–10)"
+        }
+      >
+        <span className="score-star">{hasScore ? "★" : "☆"}</span>
+        <span className="score-val">{hasScore ? score : "--"}</span>
+      </button>
+
+      {isOpen && (
+        <div className="mylist-score-popover custom-scroll" onClick={(e) => e.stopPropagation()}>
+          <div className="score-popover-header">
+            <span>MY RATING</span>
+            <span>(1–10)</span>
+          </div>
+          <div className="score-popover-list custom-scroll">
+            {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={`score-popover-item ${score === s ? "active" : ""}`}
+                onClick={() => {
+                  onUpdateScore(s);
+                  setIsOpen(false);
+                }}
+              >
+                <span className="score-num">★ {s}</span>
+                <span className="score-desc">{scoreLabels[s]}</span>
+              </button>
+            ))}
+            {hasScore && (
+              <button
+                type="button"
+                className="score-popover-clear"
+                onClick={() => {
+                  onUpdateScore(null);
+                  setIsOpen(false);
+                }}
+              >
+                ✕ Clear Rating
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2432,16 +2500,22 @@ function MyListView({
         const existing = franchises[fId];
         if (existing) {
           const updated = { ...existing, updatedAt: Date.now() };
-          if (item.type === "manga" && updated.manga?.series?.[item.activeMalId]) {
-            updated.manga.series[item.activeMalId] = {
-              ...updated.manga.series[item.activeMalId],
-              score: newScore ?? 0,
-            };
-          } else if (updated.anime?.seasons?.[item.activeMalId]) {
-            updated.anime.seasons[item.activeMalId] = {
-              ...updated.anime.seasons[item.activeMalId],
-              score: newScore ?? 0,
-            };
+          if (item.type === "manga" && updated.manga?.series) {
+            const mKey = updated.manga.series[item.activeMalId] ? item.activeMalId : item.rootMalId;
+            if (updated.manga.series[mKey]) {
+              updated.manga.series[mKey] = {
+                ...updated.manga.series[mKey],
+                score: newScore ?? 0,
+              };
+            }
+          } else if (updated.anime?.seasons) {
+            const aKey = updated.anime.seasons[item.activeMalId] ? item.activeMalId : item.rootMalId;
+            if (updated.anime.seasons[aKey]) {
+              updated.anime.seasons[aKey] = {
+                ...updated.anime.seasons[aKey],
+                score: newScore ?? 0,
+              };
+            }
           }
           onCommitFranchises({ ...franchises, [fId]: updated });
         }
@@ -2618,8 +2692,23 @@ function MyListView({
     const q = searchQuery.trim().toLowerCase();
     if (q) {
       if (q.startsWith("score:")) {
-        const target = Number(q.replace("score:", "").trim());
-        list = list.filter((item) => item.user_score === target);
+        const expr = q.replace("score:", "").trim();
+        if (expr.startsWith(">=")) {
+          const target = Number(expr.replace(">=", "").trim());
+          list = list.filter((item) => typeof item.user_score === "number" && item.user_score >= target);
+        } else if (expr.startsWith("<=")) {
+          const target = Number(expr.replace("<=", "").trim());
+          list = list.filter((item) => typeof item.user_score === "number" && item.user_score <= target);
+        } else if (expr.startsWith(">")) {
+          const target = Number(expr.replace(">", "").trim());
+          list = list.filter((item) => typeof item.user_score === "number" && item.user_score > target);
+        } else if (expr.startsWith("<")) {
+          const target = Number(expr.replace("<", "").trim());
+          list = list.filter((item) => typeof item.user_score === "number" && item.user_score < target);
+        } else {
+          const target = Number(expr);
+          list = list.filter((item) => item.user_score === target);
+        }
       } else {
         list = list.filter((item) => {
           const matchTitle = item.title.toLowerCase().includes(q);
@@ -2638,8 +2727,8 @@ function MyListView({
           comparison = a.title.localeCompare(b.title);
           break;
         case "user_score": {
-          const sa = a.user_score ?? -1;
-          const sb = b.user_score ?? -1;
+          const sa = typeof a.user_score === "number" && a.user_score > 0 ? a.user_score : -1;
+          const sb = typeof b.user_score === "number" && b.user_score > 0 ? b.user_score : -1;
           comparison = sa - sb;
           break;
         }
@@ -2931,11 +3020,11 @@ function MyListView({
             Title {renderSortArrow("title")}
           </button>
           <span style={{ textAlign: "center" }}>Format</span>
-          <button type="button" className="mylist-th-btn" style={{ justifyContent: "center" }} onClick={() => handleHeaderClick("user_score")}>
-            Score {renderSortArrow("user_score")}
+          <button type="button" className="mylist-th-btn" style={{ justifyContent: "center" }} onClick={() => handleHeaderClick("user_score")} title="Sort by your personal rating">
+            My Score {renderSortArrow("user_score")}
           </button>
-          <button type="button" className="mylist-th-btn" style={{ justifyContent: "center" }} onClick={() => handleHeaderClick("official_score")}>
-            MAL {renderSortArrow("official_score")}
+          <button type="button" className="mylist-th-btn" style={{ justifyContent: "center" }} onClick={() => handleHeaderClick("official_score")} title="Sort by official MAL rating">
+            MAL Score {renderSortArrow("official_score")}
           </button>
           <button type="button" className="mylist-th-btn" style={{ justifyContent: "center" }} onClick={() => handleHeaderClick("status")}>
             Status {renderSortArrow("status")}
@@ -3030,35 +3119,22 @@ function MyListView({
                   <span className={`type-chip ${category.className}`}>{category.label}</span>
                 </div>
 
-                {/* 5. User Score (Interactive native styled select) */}
+                {/* 5. User Score (Interactive Popover Score Cell) */}
                 <div style={{ display: "flex", justifyContent: "center" }}>
-                  <select
-                    className="mylist-score-btn"
-                    value={item.user_score !== null ? String(item.user_score) : ""}
-                    onChange={(e) => {
-                      const val = e.target.value === "" ? null : Number(e.target.value);
-                      handleUpdateItemScore(item, val);
-                    }}
-                    title="Click to edit score"
-                  >
-                    <option value="">★ --</option>
-                    <option value="10">★ 10 (Masterpiece)</option>
-                    <option value="9">★ 9 (Great)</option>
-                    <option value="8">★ 8 (Very Good)</option>
-                    <option value="7">★ 7 (Good)</option>
-                    <option value="6">★ 6 (Fine)</option>
-                    <option value="5">★ 5 (Average)</option>
-                    <option value="4">★ 4 (Bad)</option>
-                    <option value="3">★ 3 (Very Bad)</option>
-                    <option value="2">★ 2 (Horrible)</option>
-                    <option value="1">★ 1 (Appalling)</option>
-                  </select>
+                  <MyListScoreCell
+                    score={item.user_score}
+                    onUpdateScore={(newVal) => handleUpdateItemScore(item, newVal)}
+                  />
                 </div>
 
                 {/* 6. Official MAL Score */}
                 <div style={{ textAlign: "center" }}>
-                  <span className="mono" style={{ color: "var(--gold)", fontWeight: 700 }}>
-                    {item.official_score ? `★ ${item.official_score.toFixed(1)}` : "--"}
+                  <span
+                    className="mono"
+                    style={{ color: "var(--gold)", fontWeight: 700, fontSize: 11 }}
+                    title={`Official MyAnimeList Rating: ${item.official_score ? item.official_score.toFixed(2) : "Unrated"}`}
+                  >
+                    {item.official_score && item.official_score > 0 ? `★ ${item.official_score.toFixed(1)}` : "--"}
                   </span>
                 </div>
 
