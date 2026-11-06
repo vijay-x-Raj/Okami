@@ -37,10 +37,23 @@ Date: 2026-11-06
     - Unwatched Episodes / Unread Chapters badge pills on franchise cards (`totalAvailable - userProgress`).
     - Custom Category management (add, delete, assign franchise to custom categories).
     - Versioned JSON Backup Export/Import (v3 schema) plus native MyAnimeList (XML/JSON) and AniList (JSON) backup imports.
+- **Unified Explore Section Header**:
+  - Matched Explore's header styling to Library, My List, and Profile (`page-title-kanji` `探索`, `page-title-slash` `/`, `page-title` `EXPLORE`, and `page-sub`).
+- **Complete & Absolute My List Table & Tracker Integration**:
+  - Full relational binding with `buildUnifiedLibraryItems(franchises, entries)` ensuring total synchronization between franchise trees and individual tracked entries.
+  - Interactive inline progress stepper with `[-]` `x / y` `[+]` controls, direct numeric input, and Mihon auto-state transitions (`0 -> 1` marks Watching/Reading, max marks Completed, logs history, advances season).
+  - Interactive user score dropdown (1–10 / Unrated) with instant bidirectional persistence.
+  - Interactive status dropdown with real-time style transitions.
+  - Live search bar by title, genre, or release year with clear button.
+  - Type segmented chips (`All Media`, `Anime Only`, `Manga Only`).
+  - Status tabs (`All`, `Watching / Reading`, `Completed`, `On Hold`, `Dropped`, `Plan to Watch / Read`, `★ Favourites`) with live item counts.
+  - Clickable table column headers with ascending/descending indicators (`#`, `Title`, `Format`, `Score`, `MAL`, `Status`, `Progress`, `Added`).
+  - Row action controls: Favourite toggle (`★`/`☆`), Direct Tracker link (`↗`), Full Edit modal (`✎`), and Delete confirmation (`✕`).
+  - Interactive Score Distribution (1–10) and Genre Breakdown donut charts with color-coded legends.
 
 ---
 
 ## Verification & Status
 - `npx tsc --noEmit`: **0 errors** (Clean TypeScript typecheck across all files).
-- `npm run build`: **0 errors** (All 15 routes compiled and static generation successful).
-- `git status`: Pushed to `origin/main` (`c38e733`).
+- `npm run build`: **0 errors** (All 13 static and dynamic routes compiled with zero errors).
+- `git status`: Pushed to `origin/main` (`75848c4`).
