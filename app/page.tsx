@@ -1093,18 +1093,37 @@ function LibraryView({
                     >
                       +1 {isManga ? "Ch" : "Ep"}
                     </button>
-                    {item.legacyEntry ? (
-                      <button
-                        className="card-action-btn"
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onEdit(item.legacyEntry!);
-                        }}
-                      >
-                        Update
-                      </button>
-                    ) : null}
+                    <button
+                      className="card-action-btn"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onEdit(
+                          item.legacyEntry || {
+                            id: item.activeMalId,
+                            type: isManga ? "manga" : "anime",
+                            title: item.title,
+                            cover: item.cover,
+                            year: item.year,
+                            format: item.format,
+                            genres: item.genres,
+                            official_score: item.official_score,
+                            user_score: item.user_score,
+                            status: item.status,
+                            progress: item.progressNum,
+                            total: item.totalNum,
+                            completed_seasons: [],
+                            completed_volumes: [],
+                            completed_episodes: Array.from({ length: item.progressNum }, (_, i) => i + 1),
+                            date_added: item.date_added,
+                            notes: "",
+                            is_favourite: item.is_favourite,
+                          }
+                        );
+                      }}
+                    >
+                      Update
+                    </button>
                     <button
                       className="card-action-btn"
                       type="button"
@@ -3292,97 +3311,369 @@ function AddEntryModal({
     status: OkamiStatus;
     userScore: number | null;
     notes: string;
+    progress: number;
     completedSeasons: number[];
     completedVolumes: number[];
   }) => void;
 }) {
   const media = state?.media;
   const entry = state?.entry;
+
+  const total = media?.total && media.total > 0 ? media.total : null;
+  const isManga = media?.type === "manga";
+  const unit = isManga ? "Chapters" : "Episodes";
+  const unitSingular = isManga ? "Chapter" : "Episode";
+
+  const [progress, setProgress] = useState<number>(() => Math.max(0, entry?.progress ?? 0));
   const [status, setStatus] = useState<OkamiStatus>(() => entry?.status ?? "plan_to_watch");
   const [userScore, setUserScore] = useState<number | null>(() => entry?.user_score ?? null);
   const [notes, setNotes] = useState(() => entry?.notes ?? "");
+  const [inputVal, setInputVal] = useState<string>(() => String(entry?.progress ?? 0));
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   if (!media) return null;
 
+  const sliderMax = total ?? Math.max(100, Math.ceil((progress + 25) / 10) * 10);
+  const percent = total
+    ? Math.min(100, Math.round((progress / total) * 100))
+    : Math.min(100, Math.round((progress / sliderMax) * 100));
+
+  const remaining = total !== null ? Math.max(0, total - progress) : null;
+
+  const handleProgressChange = (newVal: number) => {
+    const clamped = Math.max(0, total !== null ? Math.min(newVal, total) : newVal);
+    setProgress(clamped);
+    setInputVal(String(clamped));
+
+    // Mihon auto-state transitions:
+    if (clamped > 0 && status === "plan_to_watch") {
+      setStatus("watching");
+    }
+    if (total !== null && clamped >= total) {
+      setStatus("completed");
+    }
+  };
+
+  const handleDirectInputChange = (str: string) => {
+    setInputVal(str);
+    const num = parseInt(str, 10);
+    if (!isNaN(num) && num >= 0) {
+      const clamped = total !== null ? Math.min(num, total) : num;
+      setProgress(clamped);
+      if (clamped > 0 && status === "plan_to_watch") {
+        setStatus("watching");
+      }
+      if (total !== null && clamped >= total) {
+        setStatus("completed");
+      }
+    }
+  };
+
+  const scoreLabels: Record<number, string> = {
+    10: "Masterpiece",
+    9: "Great",
+    8: "Very Good",
+    7: "Good",
+    6: "Fine",
+    5: "Average",
+    4: "Bad",
+    3: "Very Bad",
+    2: "Horrible",
+    1: "Appalling",
+  };
+
+  const sliderBackgroundStyle = {
+    background: `linear-gradient(to right, var(--accent) 0%, var(--gold) ${percent}%, var(--surface-4) ${percent}%, var(--surface-4) 100%)`,
+  };
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <span className="modal-title">
-            {entry ? "Update Entry" : "Add to Library"} — {media.title}
-          </span>
-          <button className="modal-close" type="button" onClick={onClose}>
+    <div className="update-drawer-overlay" onClick={onClose}>
+      <aside className="update-drawer-panel" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="update-drawer-header">
+          <div>
+            <div className="update-drawer-eyebrow">// OKAMI TRACKER SYSTEM</div>
+            <h2 className="update-drawer-title">
+              {entry ? "UPDATE ENTRY" : "ADD TO LIBRARY"}
+            </h2>
+          </div>
+          <button
+            className="update-drawer-close"
+            type="button"
+            onClick={onClose}
+            title="Close (Esc)"
+          >
             ✕
           </button>
         </div>
 
-        <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
-          <img src={media.cover} alt={media.title} style={{ width: 80, height: 110, objectFit: "cover", borderRadius: 4 }} />
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{media.title}</div>
-            <div style={{ fontSize: 12, color: "var(--text-3)" }}>
-              {media.year} • {media.format} • {media.total ? `${media.total} ${media.type === "manga" ? "chapters" : "episodes"}` : "Ongoing"}
+        {/* Media Summary Card */}
+        <div className="update-drawer-media-card">
+          <img
+            src={media.cover}
+            alt={media.title}
+            className="update-drawer-media-cover"
+          />
+          <div className="update-drawer-media-info">
+            <div className="update-drawer-media-title" title={media.title}>
+              {media.title}
             </div>
-            <div style={{ fontSize: 12, color: "var(--gold)", marginTop: 4 }}>
-              MAL Score: {formatScore(media.official_score)}
+            <div className="update-drawer-badges">
+              <span className={`update-media-badge ${media.type}`}>
+                {media.type}
+              </span>
+              <span className="update-media-meta-tag">{media.format}</span>
+              {media.year ? (
+                <span className="update-media-meta-tag">• {media.year}</span>
+              ) : null}
+              <span className="update-media-meta-tag">
+                • {total ? `${total} ${unit}` : "Ongoing"}
+              </span>
+            </div>
+            <div className="update-drawer-scores-row">
+              <span className="update-mal-score">
+                MAL ★ {formatScore(media.official_score)}
+              </span>
+              <span className="update-library-status-badge">
+                {entry ? `In Library: ${entry.status.replace("_", " ")}` : "Not in Library"}
+              </span>
             </div>
           </div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <label className="info-label" style={{ display: "block", marginBottom: 6 }}>
-              Status
-            </label>
-            <div className="status-button-row">
-              {statusOptions.map((opt) => (
+        {/* Scrollable Body */}
+        <div className="update-drawer-body custom-scroll">
+          {/* 1. Progress Slider Section */}
+          <div className="update-section">
+            <div className="update-section-head">
+              <span className="update-section-label">01 / PROGRESS SCRUBBER</span>
+              <span className={`update-section-badge ${percent === 100 ? "highlight" : ""}`}>
+                {percent}% COMPLETED
+              </span>
+            </div>
+
+            <div className="update-progress-display">
+              <div className="update-progress-numbers">
+                <span className="update-progress-num-big">{progress}</span>
+                <span className="update-progress-total-sub">
+                  / {total ?? "ongoing"} {unit.toLowerCase()}
+                </span>
+              </div>
+              <div className="update-progress-percent">
+                {total !== null ? (
+                  remaining === 0 ? (
+                    <span style={{ color: "var(--teal)" }}>✓ All Caught Up</span>
+                  ) : (
+                    <span>{remaining} {remaining === 1 ? unitSingular : unit} remaining</span>
+                  )
+                ) : (
+                  <span>Scrub progress</span>
+                )}
+              </div>
+            </div>
+
+            {/* Interactive Precision Range Slider */}
+            <div className="update-slider-wrap">
+              <input
+                type="range"
+                className="update-range-slider"
+                min={0}
+                max={sliderMax}
+                value={progress}
+                style={sliderBackgroundStyle}
+                onChange={(e) => handleProgressChange(Number(e.target.value))}
+                aria-label={`Progress ${unit}`}
+              />
+              <div className="update-slider-ticks">
+                <span>0</span>
+                <span>{Math.round(sliderMax / 2)}</span>
+                <span>{sliderMax}{total === null ? "+" : ""}</span>
+              </div>
+            </div>
+
+            {/* Steppers & Direct Input Row */}
+            <div className="update-steppers-row">
+              <button
+                type="button"
+                className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress - 10)}
+                disabled={progress <= 0}
+                title="Back 10"
+              >
+                -10
+              </button>
+              <button
+                type="button"
+                className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress - 1)}
+                disabled={progress <= 0}
+                title="Back 1"
+              >
+                -1
+              </button>
+
+              {/* Direct Numeric Input */}
+              <div className="update-direct-input-wrap" title="Directly enter number">
+                <input
+                  type="number"
+                  className="update-direct-input"
+                  min={0}
+                  max={total ?? 99999}
+                  value={inputVal}
+                  onChange={(e) => handleDirectInputChange(e.target.value)}
+                  onBlur={() => setInputVal(String(progress))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
+              </div>
+
+              <button
+                type="button"
+                className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress + 1)}
+                disabled={total !== null && progress >= total}
+                title="Forward 1"
+              >
+                +1
+              </button>
+              <button
+                type="button"
+                className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress + 5)}
+                disabled={total !== null && progress >= total}
+                title="Forward 5"
+              >
+                +5
+              </button>
+              {total !== null && (
                 <button
-                  key={opt.value}
                   type="button"
-                  className={`status-button status-${opt.className} ${status === opt.value ? "active" : ""}`}
-                  onClick={() => setStatus(opt.value)}
+                  className="update-stepper-btn max-btn"
+                  onClick={() => handleProgressChange(total)}
+                  disabled={progress >= total}
+                  title="Mark as completed"
                 >
-                  {opt.label}
+                  MAX
                 </button>
-              ))}
+              )}
             </div>
           </div>
 
-          <div>
-            <label className="info-label" style={{ display: "block", marginBottom: 6 }}>
-              Personal Score (1–10)
-            </label>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {/* 2. Status Section */}
+          <div className="update-section">
+            <div className="update-section-head">
+              <span className="update-section-label">02 / TRACKING STATUS</span>
+              <span className="update-section-badge">
+                {status.replace("_", " ").toUpperCase()}
+              </span>
+            </div>
+            <div className="update-status-grid">
+              {statusOptions.map((opt) => {
+                const isWatchingOpt = opt.value === "watching";
+                const isPlanOpt = opt.value === "plan_to_watch";
+                const label = isManga
+                  ? isWatchingOpt
+                    ? "Reading"
+                    : isPlanOpt
+                    ? "Plan to Read"
+                    : opt.label
+                  : isWatchingOpt
+                  ? "Watching"
+                  : isPlanOpt
+                  ? "Plan to Watch"
+                  : opt.label;
+
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={`update-status-btn ${status === opt.value ? "active" : ""}`}
+                    onClick={() => setStatus(opt.value)}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 3. Score Section */}
+          <div className="update-section">
+            <div className="update-section-head">
+              <span className="update-section-label">03 / PERSONAL RATING</span>
+              {userScore ? (
+                <span className="update-score-header-val">
+                  ★ {userScore} / 10 — {scoreLabels[userScore]}
+                </span>
+              ) : (
+                <span className="update-section-badge">UNRATED</span>
+              )}
+            </div>
+            <div className="update-score-row">
               {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
                 <button
                   key={num}
                   type="button"
-                  className={`pill ${userScore === num ? "active" : ""}`}
-                  style={{ minWidth: 32, textAlign: "center" }}
+                  className={`update-score-pill ${userScore === num ? "active" : ""}`}
                   onClick={() => setUserScore(userScore === num ? null : num)}
+                  title={`${num} - ${scoreLabels[num]}`}
                 >
-                  ★ {num}
+                  {num}
                 </button>
               ))}
             </div>
+            {userScore !== null && (
+              <button
+                type="button"
+                className="update-score-clear"
+                onClick={() => setUserScore(null)}
+              >
+                ✕ Clear Rating
+              </button>
+            )}
           </div>
 
-          <div>
-            <label className="info-label" style={{ display: "block", marginBottom: 6 }}>
-              Private Notes
-            </label>
+          {/* 4. Notes Section */}
+          <div className="update-section">
+            <div className="update-section-head">
+              <span className="update-section-label">04 / PRIVATE MEMO</span>
+              <span className="update-section-badge">{notes.length} CHARS</span>
+            </div>
             <textarea
-              className="search-input"
+              className="update-notes-textarea custom-scroll"
               rows={3}
-              style={{ width: "100%", resize: "vertical", fontSize: 12 }}
-              placeholder="Add impressions or reminders..."
+              placeholder="Add impressions, episode bookmarks, or personal reflections..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />
           </div>
+        </div>
 
-          <div className="modal-actions" style={{ marginTop: 8 }}>
-            <button className="modal-btn ghost" type="button" onClick={onClose}>
+        {/* Footer */}
+        <div className="update-drawer-footer">
+          <Link
+            className="modal-btn ghost"
+            href={media.type === "anime" ? `/anime/${media.id}` : `/manga/${media.id}`}
+            title="Open Tracker Details"
+          >
+            Tracker →
+          </Link>
+          <div className="update-drawer-footer-right">
+            <button
+              className="modal-btn ghost"
+              type="button"
+              onClick={onClose}
+            >
               Cancel
             </button>
             <button
@@ -3393,16 +3684,17 @@ function AddEntryModal({
                   status,
                   userScore,
                   notes,
+                  progress,
                   completedSeasons: entry?.completed_seasons || [],
                   completedVolumes: entry?.completed_volumes || [],
                 });
               }}
             >
-              Save to Library
+              ✓ {entry ? "Save Changes" : "Add to Library"}
             </button>
           </div>
         </div>
-      </div>
+      </aside>
     </div>
   );
 }
@@ -3928,12 +4220,26 @@ export default function Home() {
     status: OkamiStatus;
     userScore: number | null;
     notes: string;
+    progress: number;
     completedSeasons: number[];
     completedVolumes: number[];
   }) => {
     if (!modalState) return;
     const { media, entry } = modalState;
     const now = new Date().toISOString();
+
+    const maxTotal = media.total && media.total > 0 ? media.total : Infinity;
+    const clampedProgress = Math.max(0, Math.min(data.progress, maxTotal));
+
+    // Mihon auto-state transitions:
+    let finalStatus = data.status;
+    if (clampedProgress > 0 && finalStatus === "plan_to_watch") {
+      finalStatus = "watching";
+    }
+    if (media.total && clampedProgress >= media.total) {
+      finalStatus = "completed";
+    }
+
     const nextEntry: OkamiEntry = {
       id: media.id,
       type: media.type,
@@ -3944,12 +4250,12 @@ export default function Home() {
       genres: media.genres,
       official_score: media.official_score,
       user_score: data.userScore,
-      status: data.status,
-      progress: entry?.progress ?? 0,
+      status: finalStatus,
+      progress: clampedProgress,
       total: media.total ?? null,
       completed_seasons: data.completedSeasons,
       completed_volumes: data.completedVolumes,
-      completed_episodes: entry?.completed_episodes ?? [],
+      completed_episodes: Array.from({ length: clampedProgress }, (_, i) => i + 1),
       date_added: entry?.date_added ?? now,
       notes: data.notes,
       is_favourite: entry?.is_favourite ?? false,
@@ -3960,31 +4266,41 @@ export default function Home() {
       : addEntry(entries, nextEntry);
     commitEntries(nextEntries);
 
-    // Also sync to Unified Franchise
-    const franchiseId = `franchise_${media.id}`;
-    const existingFranchise = franchises[franchiseId];
+    // Sync to Unified Franchise
+    const matchedFranchise = findFranchiseByMalId(franchises, media.id);
+    const franchiseId = matchedFranchise?.franchiseId || `franchise_${media.id}`;
+    const existingFranchise = matchedFranchise || franchises[franchiseId];
+
     if (existingFranchise) {
-      if (media.type === "anime" && existingFranchise.anime) {
-        const season = existingFranchise.anime.seasons[media.id];
-        if (season) {
-          const updatedFranchise: UnifiedFranchiseEntry = {
-            ...existingFranchise,
-            anime: {
-              ...existingFranchise.anime,
-              seasons: {
-                ...existingFranchise.anime.seasons,
-                [media.id]: {
-                  ...season,
-                  score: data.userScore ?? 0,
-                  notes: data.notes,
-                },
-              },
-            },
-          };
-          saveFranchiseEntries({ ...franchises, [franchiseId]: updatedFranchise });
+      let nextFranchises = { ...franchises };
+      if (media.type === "anime") {
+        nextFranchises = bulkWatchEpisodes(nextFranchises, franchiseId, media.id, clampedProgress);
+        if (nextFranchises[franchiseId]?.anime?.seasons?.[media.id]) {
+          nextFranchises[franchiseId].anime.seasons[media.id].score = data.userScore ?? 0;
+          nextFranchises[franchiseId].anime.seasons[media.id].notes = data.notes;
+          nextFranchises[franchiseId].anime.seasons[media.id].status = finalStatus === "completed" ? "COMPLETED" : "WATCHING";
         }
+      } else if (media.type === "manga") {
+        nextFranchises = updateMangaProgress(nextFranchises, franchiseId, media.id, {
+          chaptersRead: clampedProgress,
+          status: finalStatus === "completed" ? "COMPLETED" : "READING",
+          score: data.userScore ?? undefined,
+          notes: data.notes,
+        });
       }
+      saveFranchiseEntries(nextFranchises);
     }
+
+    // Append to Mihon append-only history log
+    appendHistory({
+      franchiseId,
+      malId: media.id,
+      mediaType: media.type,
+      title: media.title,
+      coverImage: media.cover,
+      number: clampedProgress,
+      timestamp: Date.now(),
+    });
 
     setModalState(null);
   };
