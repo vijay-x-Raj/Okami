@@ -2598,13 +2598,18 @@ function MyListView({
 
     const q = searchQuery.trim().toLowerCase();
     if (q) {
-      list = list.filter((item) => {
-        const matchTitle = item.title.toLowerCase().includes(q);
-        const matchGenres = item.genres.some((g) => g.toLowerCase().includes(q));
-        const matchFormat = (item.format || "").toLowerCase().includes(q);
-        const matchYear = String(item.year || "").includes(q);
-        return matchTitle || matchGenres || matchFormat || matchYear;
-      });
+      if (q.startsWith("score:")) {
+        const target = Number(q.replace("score:", "").trim());
+        list = list.filter((item) => item.user_score === target);
+      } else {
+        list = list.filter((item) => {
+          const matchTitle = item.title.toLowerCase().includes(q);
+          const matchGenres = item.genres.some((g) => g.toLowerCase().includes(q));
+          const matchFormat = (item.format || "").toLowerCase().includes(q);
+          const matchYear = String(item.year || "").includes(q);
+          return matchTitle || matchGenres || matchFormat || matchYear;
+        });
+      }
     }
 
     list.sort((a, b) => {
@@ -2705,6 +2710,8 @@ function MyListView({
     return <span className="mylist-th-sort-icon">{sortAsc ? "▲" : "▼"}</span>;
   };
 
+  const [showAnalytics, setShowAnalytics] = useState(false);
+
   return (
     <div className="mylist-container">
       {/* ── Page Header matching other sections ── */}
@@ -2714,11 +2721,33 @@ function MyListView({
           <span className="page-title-slash">/</span>
           <span className="page-title">MY LIST</span>
           <span className="entries-badge">
-            {filteredItems.length} of {unifiedItems.length} entries
+            {filteredItems.length} of {unifiedItems.length} titles
           </span>
+
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              type="button"
+              className={`view-btn ${showAnalytics ? "active" : ""}`}
+              style={{
+                width: "auto",
+                padding: "0 14px",
+                gap: 6,
+                fontSize: 11,
+                fontFamily: "var(--font-mono, monospace)",
+                height: 36,
+              }}
+              onClick={() => setShowAnalytics((prev) => !prev)}
+              title="Toggle analytics, score distribution, and genre breakdown"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 20V10M12 20V4M6 20v-6" />
+              </svg>
+              <span>{showAnalytics ? "Hide Analytics" : "View Analytics"}</span>
+            </button>
+          </div>
         </div>
         <div className="page-sub">
-          Interactive catalog table with inline progress steppers, ratings, and instant sorting
+          Manage your personal vault, log progress, and track scores
         </div>
       </div>
 
@@ -2742,47 +2771,76 @@ function MyListView({
         </div>
       </div>
 
-      {/* ── Visual Charts ── */}
-      <div className="chart-row">
-        <div className="chart-card">
-          <div className="chart-header">
-            <span className="chart-title">Score Distribution (1–10)</span>
-          </div>
-          <div className="bar-chart">
-            {scoreDistribution.map((item) => {
-              const maxScoreCount = Math.max(1, ...scoreDistribution.map((s) => s.value));
-              const height = (item.value / maxScoreCount) * 100;
-              return (
-                <div className="bar-col" key={item.score}>
-                  <div className="bar" style={{ height: `${Math.max(4, height)}%` }} />
-                  <span className="bar-label">{item.score}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="chart-card">
-          <div className="chart-header">
-            <span className="chart-title">Genre Breakdown</span>
-          </div>
-          <div className="donut-wrap">
-            <div className="donut" style={{ background: `conic-gradient(${donutStops})` }} />
-            <div className="donut-legend">
-              {genreData.map((item, index) => {
-                const colors = ["#E8194B", "#3DB89C", "#C4A84F", "#4A4A5A", "#5B5BFF", "#C47B3D"];
+      {/* ── Visual Analytics Dashboard (Toggleable) ── */}
+      {showAnalytics && (
+        <div className="mylist-analytics-grid">
+          {/* 1. Score Distribution Bar Chart */}
+          <div className="mylist-chart-card">
+            <div className="mylist-chart-header">
+              <span className="mylist-chart-title">Score Distribution (1–10)</span>
+              <span className="mylist-chart-sub">Ratings Breakdown</span>
+            </div>
+            <div className="mylist-bar-chart">
+              {scoreDistribution.map((item) => {
+                const maxScoreCount = Math.max(1, ...scoreDistribution.map((s) => s.value));
+                const heightPct = (item.value / maxScoreCount) * 100;
                 return (
-                  <div className="legend-item" key={item.label}>
-                    <span className="legend-dot" style={{ background: colors[index % colors.length] }} />
-                    <span className="legend-label">{item.label}</span>
-                    <span className="legend-value">{item.value}</span>
+                  <div
+                    className="mylist-bar-col"
+                    key={item.score}
+                    onClick={() => {
+                      if (searchQuery === `score:${item.score}`) setSearchQuery("");
+                      else setSearchQuery(`score:${item.score}`);
+                    }}
+                    title={`Score ${item.score}: ${item.value} title${item.value === 1 ? "" : "s"} (click to filter)`}
+                  >
+                    <span className="mylist-bar-count">{item.value > 0 ? item.value : ""}</span>
+                    <div className="mylist-bar-track">
+                      <div
+                        className="mylist-bar-fill"
+                        style={{ height: `${item.value > 0 ? Math.max(8, heightPct) : 2}%` }}
+                      />
+                    </div>
+                    <span className="mylist-bar-label">{item.score}</span>
                   </div>
                 );
               })}
             </div>
           </div>
+
+          {/* 2. Genre Composition Donut */}
+          <div className="mylist-chart-card">
+            <div className="mylist-chart-header">
+              <span className="mylist-chart-title">Genre Composition</span>
+              <span className="mylist-chart-sub">Top Themes</span>
+            </div>
+            <div className="mylist-donut-wrap">
+              <div className="mylist-donut" style={{ background: `conic-gradient(${donutStops})` }} />
+              <div className="mylist-legend-list">
+                {genreData.length === 0 ? (
+                  <div style={{ color: "var(--text-3)", fontSize: 11 }}>No genre data recorded yet</div>
+                ) : (
+                  genreData.map((item, index) => {
+                    const colors = ["#E8194B", "#3DB89C", "#C4A84F", "#4A4A5A", "#5B5BFF", "#C47B3D"];
+                    return (
+                      <div className="mylist-legend-item" key={item.label}>
+                        <div className="mylist-legend-left">
+                          <span
+                            className="mylist-legend-dot"
+                            style={{ background: colors[index % colors.length] }}
+                          />
+                          <span>{item.label}</span>
+                        </div>
+                        <span className="mylist-legend-value">{item.value}</span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ── Status Tabs ── */}
       <div className="mylist-status-tabs">
