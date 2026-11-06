@@ -2466,3 +2466,412 @@ body::after {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* ─── My List Enhanced Styles ─── */
+.mylist-controls-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: var(--space-3);
+  padding: 12px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.mylist-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  flex: 1;
+  min-width: 240px;
+  max-width: 480px;
+  transition: border-color 0.15s ease;
+}
+
+.mylist-search-box:focus-within {
+  border-color: var(--accent);
+}
+
+.mylist-search-input {
+  background: transparent;
+  border: none;
+  color: var(--text-1);
+  font-family: var(--font-body, "Nunito", sans-serif);
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+}
+
+.mylist-search-input::placeholder {
+  color: var(--text-3);
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 11px;
+}
+
+.mylist-search-clear {
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+}
+
+.mylist-search-clear:hover {
+  color: var(--accent);
+}
+
+.mylist-type-pills {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mylist-type-pill {
+  padding: 5px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mylist-type-pill:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+  border-color: var(--border-hi);
+}
+
+.mylist-type-pill.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.mylist-count-badge {
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--text-3);
+  margin-left: auto;
+}
+
+.mylist-status-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: var(--space-3);
+}
+
+.mylist-status-tab {
+  padding: 6px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mylist-status-tab:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+  border-color: var(--border-hi);
+}
+
+.mylist-status-tab.active {
+  background: var(--surface-3);
+  border-color: var(--accent);
+  color: var(--text-1);
+}
+
+.mylist-status-tab.active .tab-count {
+  background: var(--accent);
+  color: #fff;
+}
+
+.mylist-status-tab .tab-count {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--text-3);
+  font-weight: 700;
+}
+
+.mylist-table {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow-x: auto;
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+}
+
+.mylist-row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  grid-template-columns: 32px 48px minmax(180px, 2fr) 75px 95px 75px 120px 145px 95px 105px;
+  padding: 10px 14px;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  line-height: 1.4;
+  min-width: 890px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s ease;
+}
+
+.mylist-row:last-child {
+  border-bottom: none;
+}
+
+.mylist-row:hover:not(.table-header) {
+  background: var(--surface-3);
+}
+
+.mylist-row.row-watching {
+  border-left: 3px solid var(--accent);
+}
+
+.mylist-row.row-completed {
+  border-left: 3px solid var(--teal);
+}
+
+.mylist-row.table-header {
+  background: var(--surface-1);
+  text-transform: uppercase;
+  color: var(--text-3);
+  letter-spacing: 1.5px;
+  font-size: 10px;
+  border-bottom: 2px solid var(--border);
+  user-select: none;
+}
+
+.mylist-th-btn {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  text-align: left;
+}
+
+.mylist-th-btn:hover {
+  color: var(--text-1);
+}
+
+.mylist-th-btn.active {
+  color: var(--accent);
+}
+
+.mylist-th-sort-icon {
+  font-size: 9px;
+  color: var(--accent);
+}
+
+.mylist-cover-thumb {
+  width: 38px;
+  height: 52px;
+  object-fit: cover;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.mylist-cover-thumb:hover {
+  transform: scale(1.05);
+  border-color: var(--accent);
+}
+
+.mylist-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mylist-title-link {
+  font-family: var(--font-body, "Nunito", sans-serif);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-1);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.15s ease;
+}
+
+.mylist-title-link:hover {
+  color: var(--accent);
+}
+
+.mylist-title-meta {
+  font-size: 10px;
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mylist-score-btn {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  color: var(--gold);
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mylist-score-btn:hover {
+  border-color: var(--gold);
+  background: var(--surface-3);
+}
+
+.mylist-table-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.mylist-stepper-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-1);
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.mylist-stepper-btn:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.mylist-stepper-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.mylist-stepper-value {
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-1);
+  min-width: 65px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.mylist-stepper-value:hover {
+  color: var(--accent);
+}
+
+.mylist-action-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.mylist-icon-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 12px;
+}
+
+.mylist-icon-btn:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+  border-color: var(--border);
+}
+
+.mylist-icon-btn.fav-active {
+  color: var(--gold);
+}
+
+.mylist-icon-btn.danger:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(232, 25, 75, 0.15);
+}
+
+.mylist-empty-state {
+  padding: 48px 24px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.mylist-empty-title {
+  font-family: var(--font-display, "Bebas Neue", cursive);
+  font-size: 26px;
+  letter-spacing: 2px;
+  color: var(--text-2);
+}
+
+.mylist-empty-sub {
+  font-size: 13px;
+  color: var(--text-3);
+  max-width: 420px;
+}

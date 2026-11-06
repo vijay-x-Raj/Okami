@@ -22,6 +22,9 @@ import {
   importLibraryFromJson,
   incrementEpisode,
   incrementChapter,
+  bulkWatchEpisodes,
+  updateMangaProgress,
+  appendHistory,
   findFranchiseByMalId,
   getFranchiseDisplayInfo,
   type UnifiedFranchiseEntry,
@@ -238,6 +241,91 @@ interface UnifiedLibraryItem {
   unreadCount: number;
   categories: string[];
   updatedAt: number;
+}
+
+function buildUnifiedLibraryItems(
+  franchises: Record<string, UnifiedFranchiseEntry>,
+  entries: OkamiEntry[]
+): UnifiedLibraryItem[] {
+  const items: UnifiedLibraryItem[] = [];
+  const seenRoots = new Set<number>();
+
+  for (const franchise of Object.values(franchises)) {
+    seenRoots.add(franchise.rootMalId);
+    const displayInfo = getFranchiseDisplayInfo(franchise);
+
+    const activeMalId =
+      displayInfo.mediaType === "manga"
+        ? (displayInfo.activeMangaMalId || franchise.rootMalId)
+        : (displayInfo.activeSeasonMalId || franchise.rootMalId);
+
+    const matchingEntry = entries.find(
+      (e) => e.id === activeMalId || e.id === franchise.rootMalId
+    );
+
+    items.push({
+      id: franchise.franchiseId,
+      rootMalId: franchise.rootMalId,
+      activeMalId,
+      title: franchise.title,
+      cover: franchise.coverImage,
+      type: displayInfo.mediaType,
+      format: matchingEntry?.format || (displayInfo.mediaType === "manga" ? "Manga" : "TV Series"),
+      year: matchingEntry?.year || 0,
+      genres: franchise.genres?.length ? franchise.genres : matchingEntry?.genres || [],
+      official_score: matchingEntry?.official_score || 0,
+      user_score: matchingEntry?.user_score ?? null,
+      status: displayInfo.overallStatus,
+      progressLabel: displayInfo.progressLabel || "--",
+      progressNum: matchingEntry?.progress || displayInfo.totalProgress || 0,
+      totalNum: matchingEntry?.total ?? displayInfo.totalAvailable ?? null,
+      date_added: new Date(franchise.addedAt || franchise.updatedAt || Date.now()).toISOString(),
+      is_favourite: Boolean(franchise.isFavorite || matchingEntry?.is_favourite),
+      franchise,
+      legacyEntry: matchingEntry,
+      unwatchedCount: displayInfo.unwatchedCount,
+      unreadCount: displayInfo.unreadCount,
+      categories: displayInfo.categories,
+      updatedAt: franchise.updatedAt || franchise.addedAt || 0,
+    });
+  }
+
+  for (const entry of entries) {
+    if (seenRoots.has(entry.id)) continue;
+    const total = entry.total || 0;
+    const progress = entry.progress || 0;
+    const diff = total > 0 ? Math.max(0, total - progress) : 0;
+
+    items.push({
+      id: `legacy_${entry.type}_${entry.id}`,
+      rootMalId: entry.id,
+      activeMalId: entry.id,
+      title: entry.title,
+      cover: entry.cover,
+      type: entry.type,
+      format: entry.format,
+      year: entry.year,
+      genres: entry.genres,
+      official_score: entry.official_score,
+      user_score: entry.user_score,
+      status: entry.status,
+      progressLabel:
+        entry.type === "manga"
+          ? `Ch ${entry.progress}/${entry.total ?? "?"}`
+          : `Ep ${entry.progress}/${entry.total ?? "?"}`,
+      progressNum: entry.progress,
+      totalNum: entry.total,
+      date_added: entry.date_added,
+      is_favourite: entry.is_favourite,
+      legacyEntry: entry,
+      unwatchedCount: entry.type === "anime" ? diff : 0,
+      unreadCount: entry.type === "manga" ? diff : 0,
+      categories: [],
+      updatedAt: new Date(entry.date_added).getTime(),
+    });
+  }
+
+  return items;
 }
 
 function ScoreCell({
@@ -535,89 +623,10 @@ function LibraryView({
   };
 
   // Unify multi-season franchises and legacy entries into single cohesive entries
-  const unifiedItems = useMemo<UnifiedLibraryItem[]>(() => {
-    const items: UnifiedLibraryItem[] = [];
-    const seenRoots = new Set<number>();
-
-    // Process all franchises first
-    for (const franchise of Object.values(franchises)) {
-      seenRoots.add(franchise.rootMalId);
-      const displayInfo = getFranchiseDisplayInfo(franchise);
-
-      const activeMalId =
-        displayInfo.mediaType === "manga"
-          ? (displayInfo.activeMangaMalId || franchise.rootMalId)
-          : (displayInfo.activeSeasonMalId || franchise.rootMalId);
-
-      const matchingEntry = entries.find(
-        (e) => e.id === activeMalId || e.id === franchise.rootMalId
-      );
-
-      items.push({
-        id: franchise.franchiseId,
-        rootMalId: franchise.rootMalId,
-        activeMalId,
-        title: franchise.title,
-        cover: franchise.coverImage,
-        type: displayInfo.mediaType,
-        format: matchingEntry?.format || (displayInfo.mediaType === "manga" ? "Manga" : "TV Series"),
-        year: matchingEntry?.year || 0,
-        genres: franchise.genres?.length ? franchise.genres : matchingEntry?.genres || [],
-        official_score: matchingEntry?.official_score || 0,
-        user_score: matchingEntry?.user_score ?? null,
-        status: displayInfo.overallStatus,
-        progressLabel: displayInfo.progressLabel || "--",
-        progressNum: matchingEntry?.progress || displayInfo.totalProgress || 0,
-        totalNum: matchingEntry?.total ?? displayInfo.totalAvailable ?? null,
-        date_added: new Date(franchise.addedAt || franchise.updatedAt).toISOString(),
-        is_favourite: Boolean(franchise.isFavorite || matchingEntry?.is_favourite),
-        franchise,
-        legacyEntry: matchingEntry,
-        unwatchedCount: displayInfo.unwatchedCount,
-        unreadCount: displayInfo.unreadCount,
-        categories: displayInfo.categories,
-        updatedAt: franchise.updatedAt || franchise.addedAt || 0,
-      });
-    }
-
-    // Process any legacy entries not yet in franchises
-    for (const entry of entries) {
-      if (seenRoots.has(entry.id)) continue;
-      const total = entry.total || 0;
-      const progress = entry.progress || 0;
-      const diff = total > 0 ? Math.max(0, total - progress) : 0;
-
-      items.push({
-        id: `legacy_${entry.type}_${entry.id}`,
-        rootMalId: entry.id,
-        activeMalId: entry.id,
-        title: entry.title,
-        cover: entry.cover,
-        type: entry.type,
-        format: entry.format,
-        year: entry.year,
-        genres: entry.genres,
-        official_score: entry.official_score,
-        user_score: entry.user_score,
-        status: entry.status,
-        progressLabel:
-          entry.type === "manga"
-            ? `Ch ${entry.progress}/${entry.total ?? "?"}`
-            : `Ep ${entry.progress}/${entry.total ?? "?"}`,
-        progressNum: entry.progress,
-        totalNum: entry.total,
-        date_added: entry.date_added,
-        is_favourite: entry.is_favourite,
-        legacyEntry: entry,
-        unwatchedCount: entry.type === "anime" ? diff : 0,
-        unreadCount: entry.type === "manga" ? diff : 0,
-        categories: [],
-        updatedAt: new Date(entry.date_added).getTime(),
-      });
-    }
-
-    return items;
-  }, [franchises, entries]);
+  const unifiedItems = useMemo<UnifiedLibraryItem[]>(
+    () => buildUnifiedLibraryItems(franchises, entries),
+    [franchises, entries]
+  );
 
   const displayedItems = useMemo(() => {
     let result = [...unifiedItems];
@@ -1842,8 +1851,9 @@ function ExploreView({
       {/* ── Page Header ── */}
       <div className="page-header">
         <div className="page-title-row">
-          <span className="page-kanji">探</span>
-          <h1 className="page-title">EXPLORE</h1>
+          <span className="page-title-kanji">探索</span>
+          <span className="page-title-slash">/</span>
+          <span className="page-title">EXPLORE</span>
           <div className="view-toggle" style={{ marginLeft: "auto", display: "flex", gap: "6px" }}>
             <button
               type="button"
@@ -2261,43 +2271,395 @@ function ExploreView({
 
 function MyListView({
   entries,
+  franchises,
   onEdit,
   onRemove,
   onToggleFavourite,
   onCommitEntries,
+  onCommitFranchises,
+  onOpenTracker,
+  onExplore,
 }: {
   entries: OkamiEntry[];
+  franchises: Record<string, UnifiedFranchiseEntry>;
   onEdit: (entry: OkamiEntry) => void;
   onRemove: (entry: OkamiEntry) => void;
   onToggleFavourite: (entry: OkamiEntry) => void;
   onCommitEntries: (next: OkamiEntry[]) => void;
+  onCommitFranchises: (next: Record<string, UnifiedFranchiseEntry>) => void;
+  onOpenTracker: (item: UnifiedLibraryItem) => void;
+  onExplore: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState("All");
-  const [editingScore, setEditingScore] = useState<string | null>(null);
-  const [editingProgress, setEditingProgress] = useState<string | null>(null);
-  const tabs = ["All", "Watching / Reading", "Completed", "On Hold", "Dropped", "Plan to Watch / Read"];
+  const [activeTab, setActiveTab] = useState<string>("All");
+  const [activeType, setActiveType] = useState<"all" | "anime" | "manga">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortField, setSortField] = useState<"index" | "title" | "user_score" | "official_score" | "status" | "progress" | "date_added">("date_added");
+  const [sortAsc, setSortAsc] = useState<boolean>(false);
+  const [editingProgressKey, setEditingProgressKey] = useState<string | null>(null);
+  const [editingProgressVal, setEditingProgressVal] = useState<number>(0);
 
-  const filteredEntries = useMemo(() => {
-    if (activeTab === "All") return entries;
-    const statusValue = statusOptions.find((option) => option.label === activeTab)?.value;
-    return entries.filter((entry) => entry.status === statusValue);
-  }, [entries, activeTab]);
+  // Build unified items from both franchises and standalone entries
+  const unifiedItems = useMemo(
+    () => buildUnifiedLibraryItems(franchises, entries),
+    [franchises, entries]
+  );
 
+  // Helper to convert UnifiedLibraryItem to OkamiEntry for edit / remove / favourite
+  const getItemEntry = useCallback((item: UnifiedLibraryItem): OkamiEntry => {
+    if (item.legacyEntry) return item.legacyEntry;
+    return {
+      id: item.activeMalId,
+      type: item.type === "manga" ? "manga" : "anime",
+      title: item.title,
+      cover: item.cover,
+      year: item.year,
+      format: item.format,
+      genres: item.genres,
+      official_score: item.official_score,
+      user_score: item.user_score,
+      status: item.status,
+      progress: item.progressNum,
+      total: item.totalNum,
+      completed_seasons: [],
+      completed_volumes: [],
+      completed_episodes: [],
+      date_added: item.date_added,
+      notes: "",
+      is_favourite: item.is_favourite,
+    };
+  }, []);
+
+  // Update item progress with complete Mihon auto-state transitions
+  const handleUpdateItemProgress = useCallback(
+    (item: UnifiedLibraryItem, newProgress: number) => {
+      const maxTotal = item.totalNum && item.totalNum > 0 ? item.totalNum : 99999;
+      const clamped = Math.max(0, Math.min(newProgress, maxTotal));
+
+      // Auto-state transitions:
+      let nextStatus: OkamiStatus = item.status;
+      if (clamped > 0 && item.status === "plan_to_watch") {
+        nextStatus = "watching";
+      }
+      if (item.totalNum && clamped >= item.totalNum) {
+        nextStatus = "completed";
+      }
+
+      // 1. If backed by franchise, update franchise structure
+      if (item.franchise) {
+        const fId = item.franchise.franchiseId;
+        let nextFranchises = { ...franchises };
+        if (item.type === "manga") {
+          nextFranchises = updateMangaProgress(franchises, fId, item.activeMalId, {
+            chaptersRead: clamped,
+            status: nextStatus === "completed" ? "COMPLETED" : "READING",
+          });
+        } else {
+          nextFranchises = bulkWatchEpisodes(franchises, fId, item.activeMalId, clamped);
+        }
+        onCommitFranchises(nextFranchises);
+      }
+
+      // 2. Update legacy entries
+      if (item.legacyEntry) {
+        onCommitEntries(
+          updateEntry(entries, item.legacyEntry.id, item.legacyEntry.type, {
+            progress: clamped,
+            status: nextStatus,
+            completed_episodes: Array.from({ length: clamped }, (_, i) => i + 1),
+          })
+        );
+      } else {
+        const newEntry: OkamiEntry = {
+          id: item.activeMalId,
+          type: item.type === "manga" ? "manga" : "anime",
+          title: item.title,
+          cover: item.cover,
+          year: item.year,
+          format: item.format,
+          genres: item.genres,
+          official_score: item.official_score,
+          user_score: item.user_score,
+          status: nextStatus,
+          progress: clamped,
+          total: item.totalNum,
+          completed_seasons: [],
+          completed_volumes: [],
+          completed_episodes: Array.from({ length: clamped }, (_, i) => i + 1),
+          date_added: item.date_added,
+          notes: "",
+          is_favourite: item.is_favourite,
+        };
+        onCommitEntries(addEntry(entries, newEntry));
+      }
+
+      // 3. Log to history
+      appendHistory({
+        franchiseId: item.franchise?.franchiseId || `legacy_${item.activeMalId}`,
+        malId: item.activeMalId,
+        mediaType: item.type === "manga" ? "manga" : "anime",
+        number: clamped,
+        title: item.title,
+        coverImage: item.cover,
+      });
+    },
+    [franchises, entries, onCommitFranchises, onCommitEntries]
+  );
+
+  // Update item score in both stores
+  const handleUpdateItemScore = useCallback(
+    (item: UnifiedLibraryItem, newScore: number | null) => {
+      if (item.franchise) {
+        const fId = item.franchise.franchiseId;
+        const existing = franchises[fId];
+        if (existing) {
+          const updated = { ...existing, updatedAt: Date.now() };
+          if (item.type === "manga" && updated.manga?.series?.[item.activeMalId]) {
+            updated.manga.series[item.activeMalId] = {
+              ...updated.manga.series[item.activeMalId],
+              score: newScore ?? 0,
+            };
+          } else if (updated.anime?.seasons?.[item.activeMalId]) {
+            updated.anime.seasons[item.activeMalId] = {
+              ...updated.anime.seasons[item.activeMalId],
+              score: newScore ?? 0,
+            };
+          }
+          onCommitFranchises({ ...franchises, [fId]: updated });
+        }
+      }
+
+      if (item.legacyEntry) {
+        onCommitEntries(
+          updateEntry(entries, item.legacyEntry.id, item.legacyEntry.type, {
+            user_score: newScore,
+          })
+        );
+      } else {
+        const newEntry: OkamiEntry = {
+          id: item.activeMalId,
+          type: item.type === "manga" ? "manga" : "anime",
+          title: item.title,
+          cover: item.cover,
+          year: item.year,
+          format: item.format,
+          genres: item.genres,
+          official_score: item.official_score,
+          user_score: newScore,
+          status: item.status,
+          progress: item.progressNum,
+          total: item.totalNum,
+          completed_seasons: [],
+          completed_volumes: [],
+          completed_episodes: [],
+          date_added: item.date_added,
+          notes: "",
+          is_favourite: item.is_favourite,
+        };
+        onCommitEntries(addEntry(entries, newEntry));
+      }
+    },
+    [franchises, entries, onCommitFranchises, onCommitEntries]
+  );
+
+  // Update item status in both stores
+  const handleUpdateItemStatus = useCallback(
+    (item: UnifiedLibraryItem, newStatus: OkamiStatus) => {
+      if (item.franchise) {
+        const fId = item.franchise.franchiseId;
+        const existing = franchises[fId];
+        if (existing) {
+          const updated = { ...existing, updatedAt: Date.now() };
+          const watchStat =
+            newStatus === "completed"
+              ? "COMPLETED"
+              : newStatus === "watching"
+                ? "WATCHING"
+                : newStatus === "on_hold"
+                  ? "ON_HOLD"
+                  : newStatus === "dropped"
+                    ? "DROPPED"
+                    : "PLAN_TO_WATCH";
+          const readStat =
+            newStatus === "completed"
+              ? "COMPLETED"
+              : newStatus === "watching"
+                ? "READING"
+                : newStatus === "on_hold"
+                  ? "ON_HOLD"
+                  : newStatus === "dropped"
+                    ? "DROPPED"
+                    : "PLAN_TO_READ";
+
+          if (item.type === "manga" && updated.manga?.series?.[item.activeMalId]) {
+            updated.manga.series[item.activeMalId] = {
+              ...updated.manga.series[item.activeMalId],
+              status: readStat,
+            };
+          } else if (updated.anime?.seasons?.[item.activeMalId]) {
+            updated.anime.seasons[item.activeMalId] = {
+              ...updated.anime.seasons[item.activeMalId],
+              status: watchStat,
+            };
+          }
+          onCommitFranchises({ ...franchises, [fId]: updated });
+        }
+      }
+
+      const nextProg = newStatus === "completed" && item.totalNum ? item.totalNum : item.progressNum;
+
+      if (item.legacyEntry) {
+        onCommitEntries(
+          updateEntry(entries, item.legacyEntry.id, item.legacyEntry.type, {
+            status: newStatus,
+            progress: nextProg,
+            completed_episodes:
+              newStatus === "completed" && item.totalNum
+                ? Array.from({ length: item.totalNum }, (_, i) => i + 1)
+                : item.legacyEntry.completed_episodes,
+          })
+        );
+      } else {
+        const newEntry: OkamiEntry = {
+          id: item.activeMalId,
+          type: item.type === "manga" ? "manga" : "anime",
+          title: item.title,
+          cover: item.cover,
+          year: item.year,
+          format: item.format,
+          genres: item.genres,
+          official_score: item.official_score,
+          user_score: item.user_score,
+          status: newStatus,
+          progress: nextProg,
+          total: item.totalNum,
+          completed_seasons: [],
+          completed_volumes: [],
+          completed_episodes: Array.from({ length: nextProg }, (_, i) => i + 1),
+          date_added: item.date_added,
+          notes: "",
+          is_favourite: item.is_favourite,
+        };
+        onCommitEntries(addEntry(entries, newEntry));
+      }
+    },
+    [franchises, entries, onCommitFranchises, onCommitEntries]
+  );
+
+  // Tab counts
+  const tabCounts = useMemo(() => {
+    let watching = 0;
+    let completed = 0;
+    let on_hold = 0;
+    let dropped = 0;
+    let plan = 0;
+    let favourites = 0;
+
+    for (const item of unifiedItems) {
+      if (item.is_favourite) favourites += 1;
+      if (item.status === "watching") watching += 1;
+      else if (item.status === "completed") completed += 1;
+      else if (item.status === "on_hold") on_hold += 1;
+      else if (item.status === "dropped") dropped += 1;
+      else if (item.status === "plan_to_watch") plan += 1;
+    }
+
+    return { watching, completed, on_hold, dropped, plan, favourites };
+  }, [unifiedItems]);
+
+  const statusTabs = [
+    { key: "All", label: "All", count: unifiedItems.length },
+    { key: "watching", label: "Watching / Reading", count: tabCounts.watching },
+    { key: "completed", label: "Completed", count: tabCounts.completed },
+    { key: "on_hold", label: "On Hold", count: tabCounts.on_hold },
+    { key: "dropped", label: "Dropped", count: tabCounts.dropped },
+    { key: "plan_to_watch", label: "Plan to Watch / Read", count: tabCounts.plan },
+    { key: "favourites", label: "★ Favourites", count: tabCounts.favourites },
+  ];
+
+  // Filtered & sorted items
+  const filteredItems = useMemo(() => {
+    let list = [...unifiedItems];
+
+    if (activeType === "anime") {
+      list = list.filter((item) => item.type === "anime");
+    } else if (activeType === "manga") {
+      list = list.filter((item) => item.type === "manga");
+    }
+
+    if (activeTab === "favourites") {
+      list = list.filter((item) => item.is_favourite);
+    } else if (activeTab === "watching") {
+      list = list.filter((item) => item.status === "watching");
+    } else if (activeTab === "plan_to_watch") {
+      list = list.filter((item) => item.status === "plan_to_watch");
+    } else if (activeTab !== "All") {
+      list = list.filter((item) => item.status === activeTab);
+    }
+
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter((item) => {
+        const matchTitle = item.title.toLowerCase().includes(q);
+        const matchGenres = item.genres.some((g) => g.toLowerCase().includes(q));
+        const matchFormat = (item.format || "").toLowerCase().includes(q);
+        const matchYear = String(item.year || "").includes(q);
+        return matchTitle || matchGenres || matchFormat || matchYear;
+      });
+    }
+
+    list.sort((a, b) => {
+      let comparison = 0;
+      switch (sortField) {
+        case "title":
+          comparison = a.title.localeCompare(b.title);
+          break;
+        case "user_score": {
+          const sa = a.user_score ?? -1;
+          const sb = b.user_score ?? -1;
+          comparison = sa - sb;
+          break;
+        }
+        case "official_score":
+          comparison = (a.official_score || 0) - (b.official_score || 0);
+          break;
+        case "status":
+          comparison = a.status.localeCompare(b.status);
+          break;
+        case "progress": {
+          const pa = a.totalNum && a.totalNum > 0 ? a.progressNum / a.totalNum : a.progressNum;
+          const pb = b.totalNum && b.totalNum > 0 ? b.progressNum / b.totalNum : b.progressNum;
+          comparison = pa - pb;
+          break;
+        }
+        case "date_added":
+          comparison = new Date(a.date_added).getTime() - new Date(b.date_added).getTime();
+          break;
+        default:
+          comparison = 0;
+      }
+      return sortAsc ? comparison : -comparison;
+    });
+
+    return list;
+  }, [unifiedItems, activeType, activeTab, searchQuery, sortField, sortAsc]);
+
+  // Analytics: Score distribution
   const scoreDistribution = useMemo(() => {
     const counts = Array.from({ length: 10 }, (_, index) => ({ score: index + 1, value: 0 }));
-    entries.forEach((entry) => {
-      if (typeof entry.user_score === "number" && entry.user_score >= 1 && entry.user_score <= 10) {
-        const index = Math.round(entry.user_score) - 1;
+    unifiedItems.forEach((item) => {
+      if (typeof item.user_score === "number" && item.user_score >= 1 && item.user_score <= 10) {
+        const index = Math.round(item.user_score) - 1;
         if (counts[index]) counts[index].value += 1;
       }
     });
     return counts;
-  }, [entries]);
+  }, [unifiedItems]);
 
+  // Analytics: Genre breakdown
   const genreData = useMemo(() => {
     const map = new Map<string, number>();
-    entries.forEach((entry) => {
-      entry.genres?.forEach((genre) => {
+    unifiedItems.forEach((item) => {
+      item.genres?.forEach((genre) => {
         map.set(genre, (map.get(genre) ?? 0) + 1);
       });
     });
@@ -2305,12 +2667,11 @@ function MyListView({
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6)
       .map(([label, value]) => ({ label, value }));
-  }, [entries]);
+  }, [unifiedItems]);
 
   const donutStops = useMemo(() => {
     const total = genreData.reduce((sum, item) => sum + item.value, 0);
     if (total === 0) return "var(--surface-3) 0 360deg";
-
     const colors = ["#E8194B", "#3DB89C", "#C4A84F", "#4A4A5A", "#5B5BFF", "#C47B3D"];
     let current = 0;
     return genreData
@@ -2323,40 +2684,69 @@ function MyListView({
       .join(", ");
   }, [genreData]);
 
+  // Stat strip calculations
+  const meanScore = useMemo(() => {
+    const scored = unifiedItems.filter((i) => typeof i.user_score === "number" && i.user_score > 0);
+    if (scored.length === 0) return "--";
+    return (scored.reduce((sum, i) => sum + (i.user_score || 0), 0) / scored.length).toFixed(1);
+  }, [unifiedItems]);
+
+  const handleHeaderClick = (field: typeof sortField) => {
+    if (sortField === field) {
+      setSortAsc(!sortAsc);
+    } else {
+      setSortField(field);
+      setSortAsc(field === "title" || field === "status");
+    }
+  };
+
+  const renderSortArrow = (field: typeof sortField) => {
+    if (sortField !== field) return null;
+    return <span className="mylist-th-sort-icon">{sortAsc ? "▲" : "▼"}</span>;
+  };
+
   return (
-    <>
+    <div className="mylist-container">
+      {/* ── Page Header matching other sections ── */}
       <div className="page-header list-header">
         <div className="page-title-row">
           <span className="page-title-kanji">一覧</span>
           <span className="page-title-slash">/</span>
           <span className="page-title">MY LIST</span>
-          <span className="entries-badge">{String(entries.length).padStart(3, "0")} entries</span>
+          <span className="entries-badge">
+            {filteredItems.length} of {unifiedItems.length} entries
+          </span>
+        </div>
+        <div className="page-sub">
+          Interactive catalog table with inline progress steppers, ratings, and instant sorting
         </div>
       </div>
 
+      {/* ── Stat Strip ── */}
       <div className="stat-strip">
         <div className="stat-pill">
-          <span className="stat-label">Total Entries</span>
-          <span className="stat-value">{String(entries.length).padStart(3, "0")}</span>
+          <span className="stat-label">Total Titles</span>
+          <span className="stat-value">{String(unifiedItems.length).padStart(3, "0")}</span>
+        </div>
+        <div className="stat-pill">
+          <span className="stat-label">Active (Watching / Reading)</span>
+          <span className="stat-value">{String(tabCounts.watching).padStart(2, "0")}</span>
         </div>
         <div className="stat-pill">
           <span className="stat-label">Completed</span>
-          <span className="stat-value">{String(entries.filter((entry) => entry.status === "completed").length).padStart(2, "0")}</span>
+          <span className="stat-value">{String(tabCounts.completed).padStart(2, "0")}</span>
         </div>
         <div className="stat-pill">
-          <span className="stat-label">Active</span>
-          <span className="stat-value">{String(entries.filter((entry) => entry.status === "watching").length).padStart(2, "0")}</span>
-        </div>
-        <div className="stat-pill">
-          <span className="stat-label">On Hold</span>
-          <span className="stat-value">{String(entries.filter((entry) => entry.status === "on_hold").length).padStart(2, "0")}</span>
+          <span className="stat-label">Mean User Score</span>
+          <span className="stat-value">{meanScore}</span>
         </div>
       </div>
 
+      {/* ── Visual Charts ── */}
       <div className="chart-row">
         <div className="chart-card">
           <div className="chart-header">
-            <span className="chart-title">Score Distribution</span>
+            <span className="chart-title">Score Distribution (1–10)</span>
           </div>
           <div className="bar-chart">
             {scoreDistribution.map((item) => {
@@ -2394,79 +2784,343 @@ function MyListView({
         </div>
       </div>
 
-      <div className="list-tabs">
-        {tabs.map((tab) => (
+      {/* ── Status Tabs ── */}
+      <div className="mylist-status-tabs">
+        {statusTabs.map((tab) => (
           <button
-            key={tab}
-            className={`list-tab ${activeTab === tab ? "active" : ""}`}
+            key={tab.key}
             type="button"
-            onClick={() => setActiveTab(tab)}
+            className={`mylist-status-tab ${activeTab === tab.key ? "active" : ""}`}
+            onClick={() => setActiveTab(tab.key)}
           >
-            {tab}
+            <span>{tab.label}</span>
+            <span className="tab-count">{tab.count}</span>
           </button>
         ))}
       </div>
 
-      <div className="library-table">
-        <div className="library-row table-header">
-          <span>#</span>
-          <span>Cover</span>
-          <span>Title</span>
-          <span>Type</span>
-          <span>Score (Click to Edit)</span>
-          <span>Official</span>
-          <span>Status (Click to Edit)</span>
-          <span>Progress</span>
-          <span>Date</span>
-          <span>⋯</span>
+      {/* ── Filter & Search Control Bar ── */}
+      <div className="mylist-controls-bar">
+        <div className="mylist-search-box">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            className="mylist-search-input"
+            type="text"
+            placeholder="Search by title, genre, year..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {searchQuery && (
+            <button
+              className="mylist-search-clear"
+              type="button"
+              onClick={() => setSearchQuery("")}
+              title="Clear search"
+            >
+              ✕
+            </button>
+          )}
         </div>
 
-        {filteredEntries.map((entry, index) => {
-          const category = entryCategory(entry.type, entry.format);
-          return (
-            <div
-              key={entryKey(entry)}
-              className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${entry.status === "watching" ? "row-watching" : ""}`}
+        <div className="mylist-type-pills">
+          {(["all", "anime", "manga"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`mylist-type-pill ${activeType === t ? "active" : ""}`}
+              onClick={() => setActiveType(t)}
             >
-              <span className="mono">{String(index + 1).padStart(2, "0")}</span>
-              <Link href={entry.type === "anime" ? `/anime/${entry.id}` : `/manga/${entry.id}`}>
-                <img className="row-cover" src={entry.cover} alt={entry.title} />
-              </Link>
-              <Link
-                className="title-cell"
-                href={entry.type === "anime" ? `/anime/${entry.id}/info` : `/manga/${entry.id}/info`}
-              >
-                {entry.title}
-              </Link>
-              <span className={`type-chip ${category.className}`}>{category.label}</span>
-              <ScoreCell
-                entry={entry}
-                editingKey={editingScore}
-                setEditingKey={setEditingScore}
-                onCommit={onCommitEntries}
-                entries={entries}
-              />
-              <span className="mono">{formatScore(entry.official_score)}</span>
-              <StatusCell entry={entry} onCommit={onCommitEntries} entries={entries} />
-              <ProgressCell
-                entry={entry}
-                editingKey={editingProgress}
-                setEditingKey={setEditingProgress}
-                onCommit={onCommitEntries}
-                entries={entries}
-              />
-              <span className="mono">{entry.date_added.slice(0, 10)}</span>
-              <EntryMenu
-                entry={entry}
-                onEdit={onEdit}
-                onRemove={onRemove}
-                onToggleFavourite={onToggleFavourite}
-              />
-            </div>
-          );
-        })}
+              {t === "all" ? "All Media" : t === "anime" ? "Anime Only" : "Manga Only"}
+            </button>
+          ))}
+        </div>
+
+        <div className="mylist-count-badge">
+          Showing {filteredItems.length} of {unifiedItems.length}
+        </div>
       </div>
-    </>
+
+      {/* ── Interactive Table ── */}
+      <div className="mylist-table custom-scroll">
+        <div className="mylist-row table-header">
+          <button type="button" className="mylist-th-btn" onClick={() => handleHeaderClick("index")}>
+            #
+          </button>
+          <span>Cover</span>
+          <button type="button" className="mylist-th-btn" onClick={() => handleHeaderClick("title")}>
+            Title {renderSortArrow("title")}
+          </button>
+          <span style={{ textAlign: "center" }}>Format</span>
+          <button type="button" className="mylist-th-btn" style={{ justifyContent: "center" }} onClick={() => handleHeaderClick("user_score")}>
+            Score {renderSortArrow("user_score")}
+          </button>
+          <button type="button" className="mylist-th-btn" style={{ justifyContent: "center" }} onClick={() => handleHeaderClick("official_score")}>
+            MAL {renderSortArrow("official_score")}
+          </button>
+          <button type="button" className="mylist-th-btn" style={{ justifyContent: "center" }} onClick={() => handleHeaderClick("status")}>
+            Status {renderSortArrow("status")}
+          </button>
+          <button type="button" className="mylist-th-btn" style={{ justifyContent: "center" }} onClick={() => handleHeaderClick("progress")}>
+            Progress {renderSortArrow("progress")}
+          </button>
+          <button type="button" className="mylist-th-btn" style={{ justifyContent: "flex-end" }} onClick={() => handleHeaderClick("date_added")}>
+            Added {renderSortArrow("date_added")}
+          </button>
+          <span style={{ textAlign: "right" }}>Actions</span>
+        </div>
+
+        {filteredItems.length === 0 ? (
+          <div className="mylist-empty-state">
+            <div className="mylist-empty-title">NO MATCHING TITLES</div>
+            <div className="mylist-empty-sub">
+              {unifiedItems.length === 0
+                ? "Your vault is empty. Explore trending masterworks and add titles to begin tracking."
+                : `No titles found matching "${searchQuery || activeTab}". Adjust your filters or clear search.`}
+            </div>
+            {unifiedItems.length === 0 ? (
+              <button
+                className="modal-btn primary"
+                type="button"
+                style={{ marginTop: 8 }}
+                onClick={onExplore}
+              >
+                Explore Catalog
+              </button>
+            ) : (
+              <button
+                className="modal-btn ghost"
+                type="button"
+                style={{ marginTop: 8 }}
+                onClick={() => {
+                  setSearchQuery("");
+                  setActiveTab("All");
+                  setActiveType("all");
+                }}
+              >
+                Reset Filters
+              </button>
+            )}
+          </div>
+        ) : (
+          filteredItems.map((item, index) => {
+            const category = entryCategory(item.type, item.format);
+            const unit = item.type === "manga" ? "Ch" : "Ep";
+            const isEditingProg = editingProgressKey === item.id;
+
+            return (
+              <div
+                key={item.id}
+                className={`mylist-row ${item.status === "watching" ? "row-watching" : item.status === "completed" ? "row-completed" : ""}`}
+              >
+                {/* 1. Index */}
+                <span className="mono" style={{ color: "var(--text-3)" }}>
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+
+                {/* 2. Cover thumbnail */}
+                <button
+                  type="button"
+                  style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
+                  onClick={() => onOpenTracker(item)}
+                  title="Open dedicated media tracker"
+                >
+                  <img className="mylist-cover-thumb" src={item.cover} alt={item.title} />
+                </button>
+
+                {/* 3. Title */}
+                <div className="mylist-title-group">
+                  <button
+                    type="button"
+                    className="mylist-title-link"
+                    style={{ background: "transparent", border: "none", padding: 0, textAlign: "left", cursor: "pointer" }}
+                    onClick={() => onOpenTracker(item)}
+                    title={item.title}
+                  >
+                    {item.title}
+                  </button>
+                  <div className="mylist-title-meta">
+                    <span>{item.format || (item.type === "manga" ? "Manga" : "TV")}</span>
+                    {item.year ? <span>• {item.year}</span> : null}
+                    {item.genres?.length ? <span>• {item.genres.slice(0, 2).join(", ")}</span> : null}
+                  </div>
+                </div>
+
+                {/* 4. Format chip */}
+                <div style={{ textAlign: "center" }}>
+                  <span className={`type-chip ${category.className}`}>{category.label}</span>
+                </div>
+
+                {/* 5. User Score (Interactive native styled select) */}
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <select
+                    className="mylist-score-btn"
+                    value={item.user_score !== null ? String(item.user_score) : ""}
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? null : Number(e.target.value);
+                      handleUpdateItemScore(item, val);
+                    }}
+                    title="Click to edit score"
+                  >
+                    <option value="">★ --</option>
+                    <option value="10">★ 10 (Masterpiece)</option>
+                    <option value="9">★ 9 (Great)</option>
+                    <option value="8">★ 8 (Very Good)</option>
+                    <option value="7">★ 7 (Good)</option>
+                    <option value="6">★ 6 (Fine)</option>
+                    <option value="5">★ 5 (Average)</option>
+                    <option value="4">★ 4 (Bad)</option>
+                    <option value="3">★ 3 (Very Bad)</option>
+                    <option value="2">★ 2 (Horrible)</option>
+                    <option value="1">★ 1 (Appalling)</option>
+                  </select>
+                </div>
+
+                {/* 6. Official MAL Score */}
+                <div style={{ textAlign: "center" }}>
+                  <span className="mono" style={{ color: "var(--gold)", fontWeight: 700 }}>
+                    {item.official_score ? `★ ${item.official_score.toFixed(1)}` : "--"}
+                  </span>
+                </div>
+
+                {/* 7. Interactive Status Select */}
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <select
+                    className={`status-chip ${statusClass(item.status)}`}
+                    style={{ cursor: "pointer", border: "none", outline: "none" }}
+                    value={item.status}
+                    onChange={(e) => handleUpdateItemStatus(item, e.target.value as OkamiStatus)}
+                    title="Click to change status"
+                  >
+                    <option value="watching">{item.type === "manga" ? "READING" : "WATCHING"}</option>
+                    <option value="completed">COMPLETED</option>
+                    <option value="on_hold">ON HOLD</option>
+                    <option value="dropped">DROPPED</option>
+                    <option value="plan_to_watch">{item.type === "manga" ? "PLAN TO READ" : "PLAN TO WATCH"}</option>
+                  </select>
+                </div>
+
+                {/* 8. Progress Stepper: [-1] [input / label] [+1] */}
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <div className="mylist-table-stepper">
+                    <button
+                      type="button"
+                      className="mylist-stepper-btn"
+                      onClick={() => handleUpdateItemProgress(item, item.progressNum - 1)}
+                      disabled={item.progressNum <= 0}
+                      title="Decrease by 1"
+                    >
+                      -
+                    </button>
+
+                    {isEditingProg ? (
+                      <input
+                        className="inline-input"
+                        type="number"
+                        min={0}
+                        max={item.totalNum ?? 99999}
+                        value={editingProgressVal}
+                        autoFocus
+                        style={{ width: 55, textAlign: "center", fontSize: 11, padding: "1px 2px" }}
+                        onChange={(e) => setEditingProgressVal(Number(e.target.value) || 0)}
+                        onBlur={() => {
+                          handleUpdateItemProgress(item, editingProgressVal);
+                          setEditingProgressKey(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            handleUpdateItemProgress(item, editingProgressVal);
+                            setEditingProgressKey(null);
+                          }
+                          if (e.key === "Escape") setEditingProgressKey(null);
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="mylist-stepper-value"
+                        onClick={() => {
+                          setEditingProgressKey(item.id);
+                          setEditingProgressVal(item.progressNum);
+                        }}
+                        title="Click to type exact progress"
+                      >
+                        {unit} {item.progressNum} / {item.totalNum ?? "?"}
+                      </span>
+                    )}
+
+                    <button
+                      type="button"
+                      className="mylist-stepper-btn"
+                      onClick={() => handleUpdateItemProgress(item, item.progressNum + 1)}
+                      disabled={item.totalNum !== null && item.progressNum >= item.totalNum}
+                      title="Quick +1 progress"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+
+                {/* 9. Added Date */}
+                <div style={{ textAlign: "right" }}>
+                  <span className="mono" style={{ color: "var(--text-3)", fontSize: 10 }}>
+                    {item.date_added.slice(0, 10)}
+                  </span>
+                </div>
+
+                {/* 10. Actions Group */}
+                <div className="mylist-action-btn-group">
+                  {/* Favourite Star */}
+                  <button
+                    type="button"
+                    className={`mylist-icon-btn ${item.is_favourite ? "fav-active" : ""}`}
+                    onClick={() => onToggleFavourite(getItemEntry(item))}
+                    title={item.is_favourite ? "Remove favourite" : "Add to favourites"}
+                  >
+                    {item.is_favourite ? "★" : "☆"}
+                  </button>
+
+                  {/* Open Tracker Link */}
+                  <button
+                    type="button"
+                    className="mylist-icon-btn"
+                    onClick={() => onOpenTracker(item)}
+                    title="Open Tracker"
+                  >
+                    ↗
+                  </button>
+
+                  {/* Edit Modal */}
+                  <button
+                    type="button"
+                    className="mylist-icon-btn"
+                    onClick={() => onEdit(getItemEntry(item))}
+                    title="Edit full entry details"
+                  >
+                    ✎
+                  </button>
+
+                  {/* Delete Button */}
+                  <button
+                    type="button"
+                    className="mylist-icon-btn danger"
+                    onClick={() => {
+                      if (confirm(`Remove "${item.title}" from your list?`)) {
+                        onRemove(getItemEntry(item));
+                      }
+                    }}
+                    title="Delete from list"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -3526,10 +4180,14 @@ export default function Home() {
               {activeNav === "My List" ? (
                 <MyListView
                   entries={entries}
+                  franchises={franchises}
                   onEdit={(entry) => setModalState({ media: entryToMedia(entry), entry })}
                   onRemove={handleRemoveEntry}
                   onToggleFavourite={handleToggleFavourite}
                   onCommitEntries={commitEntries}
+                  onCommitFranchises={commitFranchises}
+                  onOpenTracker={openTracker}
+                  onExplore={() => setActiveNav("Explore")}
                 />
               ) : null}
               {activeNav === "Profile" ? (
