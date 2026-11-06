@@ -1,4 +1,4 @@
-import { JIKAN_BASE, jikanFetch, normalizeItem, type JikanItem } from "@/app/lib/jikan";
+import { aniListSeason } from "@/app/lib/anilist";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -6,19 +6,36 @@ function clamp(value: number, min: number, max: number) {
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const limit = clamp(Number(url.searchParams.get("limit") ?? 12), 1, 25);
-  const apiUrl = new URL(`${JIKAN_BASE}/seasons/now`);
-  apiUrl.searchParams.set("limit", String(limit));
+  const year = Number(url.searchParams.get("year")) || undefined;
+  const season = url.searchParams.get("season")?.trim() || undefined;
+  const page = Math.max(1, Number(url.searchParams.get("page") || 1));
+  const limit = clamp(Number(url.searchParams.get("limit") ?? 15), 1, 30);
 
   try {
-    const response = await jikanFetch(apiUrl, { next: { revalidate: 3600 } });
-    if (!response.ok) {
-      return Response.json({ error: "Jikan request failed." }, { status: 502 });
-    }
-    const payload = (await response.json()) as { data?: JikanItem[] };
-    const data = Array.isArray(payload?.data) ? payload.data.map((item) => normalizeItem(item, "anime")) : [];
-    return Response.json({ data });
-  } catch {
-    return Response.json({ error: "Jikan request failed." }, { status: 502 });
+    const data = await aniListSeason(year, season, page, limit);
+
+    return Response.json(
+      {
+        data,
+        pagination: {
+          last_visible_page: 5,
+          has_next_page: data.length >= limit,
+        },
+      },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
+        },
+      }
+    );
+  } catch (error) {
+    return Response.json(
+      {
+        data: [],
+        pagination: { last_visible_page: 1, has_next_page: false },
+        error: error instanceof Error ? error.message : "Failed to load seasonal anime.",
+      },
+      { status: 500 }
+    );
   }
 }

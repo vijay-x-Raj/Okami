@@ -4,7 +4,6 @@ function getNow(): number {
   return Date.now();
 }
 
-
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -18,15 +17,17 @@ import {
   fetchDetail,
   fetchFranchiseGraph,
   fetchVolumes,
-  type VolumeData,
+  type MangaVolumeItem,
 } from "@/app/lib/api";
 import {
   addEntry,
+  getFranchiseByMalId,
   loadEntries,
   loadFranchiseEntries,
   saveEntries,
   saveFranchiseEntries,
   updateEntry,
+  type MangaProgress,
   type OkamiEntry,
   type OkamiStatus,
   type ReadStatus,
@@ -70,7 +71,7 @@ export default function MangaTrackerPage() {
   const mangaId = rawId ? Number(rawId) : Number.NaN;
 
   const [media, setMedia] = useState<OkamiMedia | null>(null);
-  const [volumes, setVolumes] = useState<VolumeData[]>([]);
+  const [volumes, setVolumes] = useState<MangaVolumeItem[]>([]);
   const [characters, setCharacters] = useState<JikanCharacter[]>([]);
   const [franchiseGraph, setFranchiseGraph] = useState<FranchiseGraph | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,15 +88,17 @@ export default function MangaTrackerPage() {
   );
 
   const franchise = useMemo(() => {
-    if (!franchiseGraph) return null;
-    return franchises[franchiseGraph.franchiseId] ?? null;
-  }, [franchises, franchiseGraph]);
+    if (franchiseGraph) {
+      return franchises[franchiseGraph.franchiseId] ?? null;
+    }
+    return getFranchiseByMalId(franchises, mangaId) ?? null;
+  }, [franchises, franchiseGraph, mangaId]);
 
-  const mangaProgress = franchise?.manga?.[mangaId];
+  const mangaProgress: MangaProgress | undefined = franchise?.manga?.series?.[mangaId];
   const chaptersRead = mangaProgress?.chaptersRead ?? entry?.progress ?? 0;
   const volumesRead = mangaProgress?.volumesRead ?? entry?.completed_volumes?.length ?? 0;
-  const completedVolumesList = entry?.completed_volumes ?? [];
-  const readStatus = mangaProgress?.status ?? "PLAN_TO_READ";
+  const completedVolumesList = mangaProgress?.readVolumeNumbers ?? entry?.completed_volumes ?? [];
+  const readStatus: ReadStatus = mangaProgress?.status ?? (entry?.status === "completed" ? "COMPLETED" : entry?.status === "watching" ? "READING" : entry?.status === "on_hold" ? "ON_HOLD" : entry?.status === "dropped" ? "DROPPED" : "PLAN_TO_READ");
 
   const totalChapters = media?.chapters ?? media?.total ?? null;
   const totalVolumes = media?.volumes ?? (volumes.length > 0 ? volumes.length : null);
@@ -111,7 +114,12 @@ export default function MangaTrackerPage() {
   };
 
   // Synchronize progress to both legacy OkamiEntry and UnifiedFranchiseEntry
-  const handleUpdateProgress = (newChapters: number, newVolumes: number, newStatus?: ReadStatus) => {
+  const handleUpdateProgress = (
+    newChapters: number,
+    newVolumes: number,
+    newStatus?: ReadStatus,
+    newReadVolumes?: number[]
+  ) => {
     if (!media) return;
 
     const clampedChapters = Math.max(0, newChapters);
@@ -136,12 +144,15 @@ export default function MangaTrackerPage() {
               ? "dropped"
               : "plan_to_watch";
 
+    const updatedVolumeNumbers = newReadVolumes ?? completedVolumesList;
+
     // 1. Update legacy entry
     if (entry) {
       commitEntries(
         updateEntry(entries, mangaId, "manga", {
           progress: clampedChapters,
           status: legacyStatus,
+          completed_volumes: updatedVolumeNumbers,
         })
       );
     } else {
@@ -149,54 +160,85 @@ export default function MangaTrackerPage() {
         ...buildMangaEntry(media),
         progress: clampedChapters,
         status: legacyStatus,
+        completed_volumes: updatedVolumeNumbers,
       };
       commitEntries(addEntry(entries, nextEntry));
     }
 
-    // 2. Update franchise entry
-    const franchiseId = franchiseGraph?.franchiseId ?? `franchise_${mangaId}`;
-    const currentFranchise = franchises[franchiseId] ?? {
+    // 2. Update UnifiedFranchiseEntry
+    const franchiseId = franchiseGraph ? franchiseGraph.franchiseId : `franchise_${mangaId}`;
+    const now = getNow();
+    const currentFranchise: UnifiedFranchiseEntry = franchises[franchiseId] ?? {
       franchiseId,
-      rootMalId: franchiseGraph?.rootMalId ?? mangaId,
-      title: franchiseGraph?.title ?? media.title,
-      coverImage: franchiseGraph?.cover ?? media.cover,
-      updatedAt: getNow(),
-      manga: {},
+      rootMalId: franchiseGraph ? franchiseGraph.rootMalId : mangaId,
+      title: franchiseGraph ? franchiseGraph.title : media.title,
+      coverImage: media.cover,
+      genres: media.genres || [],
+      addedAt: now,
+      updatedAt: now,
+      isFavorite: false,
+      linkedMalIds: [mangaId],
+      manga: {
+        overallStatus: status,
+        activeMangaMalId: mangaId,
+        series: {},
+      },
     };
 
-    const updatedFranchise: UnifiedFranchiseEntry = {
-      ...currentFranchise,
-      updatedAt: getNow(),
-      manga: {
-        ...(currentFranchise.manga ?? {}),
-        [mangaId]: {
-          malId: mangaId,
-          title: media.title,
-          chaptersRead: clampedChapters,
-          totalChapters,
-          volumesRead: clampedVolumes,
-          totalVolumes,
-          status,
-          score: entry?.user_score ?? undefined,
+    const updatedMangaRecord: MangaProgress = {
+      malId: mangaId,
+      title: media.title,
+      titleEnglish: media.title_english ?? null,
+      coverImage: media.cover,
+      format: media.format || "Manga",
+      chaptersRead: clampedChapters,
+      totalChapters: totalChapters ?? 0,
+      volumesRead: clampedVolumes,
+      totalVolumes: totalVolumes ?? 0,
+      readVolumeNumbers: updatedVolumeNumbers,
+      status,
+      score: entry?.user_score ?? 0,
+      notes: entry?.notes || "",
+      updatedAt: now,
+    };
+
+    const nextSeries = {
+      ...(currentFranchise.manga?.series ?? {}),
+      [mangaId]: updatedMangaRecord,
+    };
+
+    const allCompleted = Object.values(nextSeries).every((m) => m.status === "COMPLETED");
+    const overallStatus: ReadStatus = allCompleted
+      ? "COMPLETED"
+      : status === "PLAN_TO_READ"
+        ? "PLAN_TO_READ"
+        : "READING";
+
+    const nextFranchises: Record<string, UnifiedFranchiseEntry> = {
+      ...franchises,
+      [franchiseId]: {
+        ...currentFranchise,
+        updatedAt: now,
+        manga: {
+          overallStatus,
+          activeMangaMalId: mangaId,
+          series: nextSeries,
         },
       },
     };
 
-    commitFranchises({
-      ...franchises,
-      [franchiseId]: updatedFranchise,
-    });
+    commitFranchises(nextFranchises);
   };
 
   const handleAdd = () => {
     if (!media || entry) return;
-    const newEntry = buildMangaEntry(media);
-    commitEntries(addEntry(entries, newEntry));
+    const nextEntry = buildMangaEntry(media);
+    commitEntries(addEntry(entries, nextEntry));
     handleUpdateProgress(0, 0, "PLAN_TO_READ");
   };
 
-  const handleStatusChange = (status: ReadStatus) => {
-    handleUpdateProgress(chaptersRead, volumesRead, status);
+  const handleStatusChange = (newStatus: ReadStatus) => {
+    handleUpdateProgress(chaptersRead, volumesRead, newStatus);
   };
 
   const toggleVolume = (volNum: number) => {
@@ -205,15 +247,7 @@ export default function MangaTrackerPage() {
       ? completedVolumesList.filter((v) => v !== volNum)
       : [...completedVolumesList, volNum].sort((a, b) => a - b);
 
-    if (entry) {
-      commitEntries(
-        updateEntry(entries, mangaId, "manga", {
-          completed_volumes: nextCompleted,
-        })
-      );
-    }
-
-    handleUpdateProgress(chaptersRead, nextCompleted.length);
+    handleUpdateProgress(chaptersRead, nextCompleted.length, undefined, nextCompleted);
   };
 
   useEffect(() => {
@@ -232,15 +266,15 @@ export default function MangaTrackerPage() {
 
     const load = async () => {
       try {
-        const [detail, volList, cast, graph] = await Promise.all([
+        const [detail, volData, cast, graph] = await Promise.all([
           fetchDetail("manga", mangaId),
-          fetchVolumes(mangaId).catch(() => []),
-          fetchCharacters(mangaId).catch(() => []),
+          fetchVolumes(mangaId).catch(() => ({ totalVolumes: null, totalChapters: null, status: "", volumes: [], pictures: [] })),
+          fetchCharacters(mangaId, "manga").catch(() => []),
           fetchFranchiseGraph(mangaId, "manga").catch(() => null),
         ]);
         if (!active) return;
         setMedia(detail);
-        setVolumes(volList);
+        setVolumes(volData.volumes);
         setCharacters(cast);
         setFranchiseGraph(graph);
       } catch {
@@ -279,6 +313,15 @@ export default function MangaTrackerPage() {
   // Find linked anime adaptation if any
   const linkedAnimeSeason = franchiseGraph?.seasons?.[0] ?? franchiseGraph?.extras?.[0] ?? null;
 
+  // Percentage calculations
+  const chapterPercent = totalChapters && totalChapters > 0
+    ? Math.min(100, Math.round((chaptersRead / totalChapters) * 100))
+    : 0;
+
+  const volumePercent = totalVolumes && totalVolumes > 0
+    ? Math.min(100, Math.round((volumesRead / totalVolumes) * 100))
+    : 0;
+
   return (
     <div className="detail-page">
       <div className="detail-page-header">
@@ -287,6 +330,11 @@ export default function MangaTrackerPage() {
             ← Back to Library
           </Link>
           {media ? <span className="detail-page-id">MAL Manga #{media.id}</span> : null}
+          {media ? (
+            <Link className="adaptation-pill manga-link" href={`/manga/${media.id}/info`}>
+              ℹ View Full Manga Info →
+            </Link>
+          ) : null}
         </div>
         {linkedAnimeSeason ? (
           <Link
@@ -294,30 +342,64 @@ export default function MangaTrackerPage() {
             href={`/anime/${linkedAnimeSeason.malId}`}
             title="Open linked Anime adaptation"
           >
-            📺 Switch to Anime: {linkedAnimeSeason.title} →
+            📺 Switch to Anime Tracker: {linkedAnimeSeason.title} →
           </Link>
         ) : null}
       </div>
 
-      {/* Franchise Banner */}
-      {franchiseGraph && (franchiseGraph.seasons.length > 0 || franchiseGraph.adaptations.length > 1) ? (
+      {/* Franchise Banner & Dual Progress */}
+      {franchiseGraph && (
         <div className="franchise-strip-banner">
-          <div className="franchise-strip-badge">UNIFIED FRANCHISE</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div className="franchise-strip-badge">UNIFIED MANGA & LIGHT NOVEL TRACKER</div>
+            {linkedAnimeSeason && (
+              <span className="franchise-strip-meta accent-text">
+                Anime Adaptation: {linkedAnimeSeason.title}
+              </span>
+            )}
+          </div>
           <div className="franchise-strip-title">{franchiseGraph.title}</div>
-          <div className="franchise-strip-meta">
-            {franchiseGraph.seasons.length > 0 ? (
-              <span>{franchiseGraph.seasons.length} Anime Seasons</span>
-            ) : null}
-            {franchiseGraph.adaptations.length > 0 ? (
-              <span>• {franchiseGraph.adaptations.length} Manga / Novels</span>
-            ) : null}
-            {franchiseGraph.extras.length > 0 ? (
-              <span>• {franchiseGraph.extras.length} Movies/OVAs</span>
-            ) : null}
+
+          {/* Dual Progress Bars */}
+          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-2)", marginBottom: 4 }}>
+                <span>CHAPTERS READ</span>
+                <span>{chaptersRead} / {totalChapters ? `${totalChapters} chs` : "?"} ({chapterPercent}%)</span>
+              </div>
+              <div style={{ height: 6, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${chapterPercent}%`,
+                    background: "var(--teal)",
+                    transition: "width 0.3s ease",
+                  }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-2)", marginBottom: 4 }}>
+                <span>VOLUMES COMPLETED</span>
+                <span>{volumesRead} / {totalVolumes ? `${totalVolumes} vols` : "?"} ({volumePercent}%)</span>
+              </div>
+              <div style={{ height: 6, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${volumePercent}%`,
+                    background: "var(--gold)",
+                    transition: "width 0.3s ease",
+                  }}
+                />
+              </div>
+            </div>
           </div>
         </div>
-      ) : null}
+      )}
 
+      {/* Hero Card */}
       <div className="detail-card detail-hero-card">
         {loading ? (
           <div className="detail-empty">Loading manga details…</div>
@@ -329,6 +411,11 @@ export default function MangaTrackerPage() {
               <img className="detail-hero-cover" src={media.cover} alt={media.title} />
               <div>
                 <div className="detail-title">{media.title}</div>
+                {media.title_english && media.title_english !== media.title && (
+                  <div style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 8 }}>
+                    {media.title_english}
+                  </div>
+                )}
                 <div className="detail-meta">
                   <span>{media.year || "--"}</span>
                   <span>•</span>
@@ -363,9 +450,12 @@ export default function MangaTrackerPage() {
               >
                 {entry ? "In Library ✓" : "+ Add to Library"}
               </button>
+              <Link className="modal-btn ghost" href={`/manga/${media.id}/info`}>
+                Full Overview & Cast
+              </Link>
               {linkedAnimeSeason ? (
                 <Link className="modal-btn ghost" href={`/anime/${linkedAnimeSeason.malId}`}>
-                  Watch Anime Adaptation
+                  📺 Open Anime Tracker
                 </Link>
               ) : null}
               <span className="detail-score">
@@ -379,28 +469,15 @@ export default function MangaTrackerPage() {
         )}
       </div>
 
-      <div className="detail-card detail-synopsis-card">
-        {loading ? (
-          <div className="detail-empty">Loading synopsis…</div>
-        ) : !media ? (
-          <div className="detail-empty">Synopsis unavailable.</div>
-        ) : (
-          <>
-            <div className="detail-section-title">Synopsis</div>
-            <p className="detail-synopsis">{media.synopsis || "No synopsis available."}</p>
-          </>
-        )}
-      </div>
-
       <div className="detail-lower-grid">
-        {/* Left Column: Chapter & Volume Tracker */}
+        {/* Left Column: Chapter & Volume Tracker Controls */}
         <div className="detail-card detail-manga-tracker-card">
           <div className="detail-section">
             <div className="detail-section-title">Manga Reading Tracker</div>
 
             {/* Reading Status Selector */}
             <div style={{ marginBottom: 20 }}>
-              <span className="field-label">Reading Status</span>
+              <span className="field-label" style={{ display: "block", marginBottom: 8 }}>Reading Status</span>
               <div className="status-button-row" role="group" aria-label="Reading status">
                 {STATUS_OPTIONS.map((option) => {
                   const active = readStatus === option.value;
@@ -421,7 +498,7 @@ export default function MangaTrackerPage() {
             </div>
 
             {/* Steppers & Numerical Inputs */}
-            <div className="manga-tracker-steppers">
+            <div className="manga-tracker-steppers" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               {/* Chapter Stepper */}
               <div className="stepper-box">
                 <div className="stepper-header">
@@ -511,7 +588,7 @@ export default function MangaTrackerPage() {
               </div>
             </div>
 
-            {/* Interactive Volume Grid */}
+            {/* Interactive Volume Shelf Grid */}
             <div style={{ marginTop: 24 }}>
               <div
                 style={{
@@ -522,30 +599,24 @@ export default function MangaTrackerPage() {
                 }}
               >
                 <div className="detail-section-title" style={{ margin: 0 }}>
-                  Volume Checklist ({completedVolumesList.length} read)
+                  Volume Shelf Checklist ({completedVolumesList.length} / {volumes.length || totalVolumes || "?"} read)
                 </div>
                 {volumes.length > 0 ? (
                   <button
                     className="btn-text-link"
                     type="button"
                     onClick={() => {
-                      const allVols = volumes.map((v) => v.volume_number);
+                      const allVols = volumes.map((v) => v.volumeNumber);
                       if (completedVolumesList.length === allVols.length) {
-                        commitEntries(
-                          updateEntry(entries, mangaId, "manga", { completed_volumes: [] })
-                        );
-                        handleUpdateProgress(chaptersRead, 0);
+                        handleUpdateProgress(chaptersRead, 0, undefined, []);
                       } else {
-                        commitEntries(
-                          updateEntry(entries, mangaId, "manga", { completed_volumes: allVols })
-                        );
-                        handleUpdateProgress(chaptersRead, allVols.length);
+                        handleUpdateProgress(chaptersRead, allVols.length, undefined, allVols);
                       }
                     }}
                   >
                     {completedVolumesList.length === volumes.length
                       ? "Unmark All"
-                      : "Mark All Read"}
+                      : "Mark All Volumes Read"}
                   </button>
                 ) : null}
               </div>
@@ -553,20 +624,76 @@ export default function MangaTrackerPage() {
               {volumes.length === 0 ? (
                 <div className="detail-empty">No volume breakdown available.</div>
               ) : (
-                <div className="volume-grid custom-scroll">
+                <div
+                  className="custom-scroll"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))",
+                    gap: 12,
+                    maxHeight: 480,
+                    overflowY: "auto",
+                    padding: 4,
+                  }}
+                >
                   {volumes.map((vol) => {
-                    const isRead = completedVolumesList.includes(vol.volume_number);
+                    const isRead = completedVolumesList.includes(vol.volumeNumber);
                     return (
-                      <button
-                        key={vol.mal_id}
-                        type="button"
-                        className={`volume-tile ${isRead ? "read" : ""}`}
-                        onClick={() => toggleVolume(vol.volume_number)}
-                        title={`Click to mark ${vol.title} as ${isRead ? "unread" : "read"}`}
+                      <div
+                        key={vol.volumeNumber}
+                        onClick={() => toggleVolume(vol.volumeNumber)}
+                        style={{
+                          background: isRead ? "var(--surface-3)" : "var(--surface-2)",
+                          border: `1px solid ${isRead ? "var(--teal)" : "var(--border)"}`,
+                          borderRadius: 4,
+                          padding: 6,
+                          cursor: "pointer",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          transition: "all 0.15s ease",
+                          position: "relative",
+                        }}
                       >
-                        <span className="vol-number">VOL.{String(vol.volume_number).padStart(2, "0")}</span>
-                        <span className="vol-check">{isRead ? "✓" : "—"}</span>
-                      </button>
+                        <div style={{ width: "100%", height: 130, position: "relative", marginBottom: 6, overflow: "hidden", borderRadius: 2 }}>
+                          <img
+                            src={vol.coverUrl}
+                            alt={vol.title}
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                              filter: isRead ? "none" : "grayscale(0.3) opacity(0.8)",
+                            }}
+                          />
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: 4,
+                              right: 4,
+                              width: 20,
+                              height: 20,
+                              borderRadius: "50%",
+                              background: isRead ? "var(--teal)" : "rgba(0,0,0,0.6)",
+                              color: "#fff",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 11,
+                              fontWeight: 700,
+                            }}
+                          >
+                            {isRead ? "✓" : "○"}
+                          </div>
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: isRead ? "var(--text-1)" : "var(--text-2)" }}>
+                          Vol. {vol.volumeNumber}
+                        </span>
+                        {vol.estimatedChapters && (
+                          <span style={{ fontSize: 9, color: "var(--text-3)", marginTop: 2 }}>
+                            {vol.estimatedChapters}
+                          </span>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -575,7 +702,7 @@ export default function MangaTrackerPage() {
           </div>
         </div>
 
-        {/* Right Column: Overview, Cast & Franchise Navigation */}
+        {/* Right Column: Metadata, Characters & Franchise Media */}
         <div className="detail-card detail-info-card">
           <div className="detail-tabs">
             <button
@@ -592,14 +719,13 @@ export default function MangaTrackerPage() {
             >
               Characters
             </button>
-            {franchiseGraph &&
-            (franchiseGraph.seasons.length > 0 || franchiseGraph.adaptations.length > 1) ? (
+            {franchiseGraph && (franchiseGraph.seasons.length > 0 || franchiseGraph.adaptations.length > 1) ? (
               <button
                 className={`detail-tab ${activeInfoTab === "franchise" ? "active" : ""}`}
                 type="button"
                 onClick={() => setActiveInfoTab("franchise")}
               >
-                Franchise ({franchiseGraph.seasons.length + franchiseGraph.adaptations.length})
+                Franchise Hub
               </button>
             ) : null}
           </div>
@@ -639,12 +765,12 @@ export default function MangaTrackerPage() {
               </div>
             ) : activeInfoTab === "characters" ? (
               <div className="detail-section">
-                <div className="detail-section-title">Characters</div>
+                <div className="detail-section-title">Manga Characters</div>
                 {characters.length === 0 ? (
                   <div className="detail-empty">No character data available.</div>
                 ) : (
                   <div className="cast-list">
-                    {characters.slice(0, 12).map((char) => (
+                    {characters.slice(0, 16).map((char) => (
                       <div className="cast-card" key={char.id || char.name}>
                         <div className="cast-character">
                           {char.image ? (

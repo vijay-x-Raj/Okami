@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import type { JikanEpisode, JikanRelation, MediaType, OkamiMedia } from "./lib/jikan";
+import type { JikanEpisode, JikanRelation, MangaVolumeItem, MediaType, OkamiMedia } from "./lib/jikan";
 import { fetchDetail, fetchEpisodes, fetchRelated, fetchSeason, fetchTop, fetchVolumes, searchMedia } from "./lib/api";
 import {
   addEntry,
@@ -17,8 +17,8 @@ import {
   loadFranchiseEntries,
   saveFranchiseEntries,
   migrateLegacyEntries,
-  exportAllData,
-  importAllData,
+  exportLibraryAsJson,
+  importLibraryFromJson,
   incrementEpisode,
   incrementChapter,
   findFranchiseByMalId,
@@ -81,25 +81,26 @@ const libraryFilters = {
     { label: "Romance", value: "romance" },
   ],
   status: [
-    { label: "Watching", value: "watching" },
+    { label: "Watching / Reading", value: "watching" },
     { label: "Completed", value: "completed" },
     { label: "On Hold", value: "on_hold" },
     { label: "Dropped", value: "dropped" },
-    { label: "PTW", value: "plan_to_watch" },
+    { label: "Plan to Watch / Read", value: "plan_to_watch" },
+    { label: "★ Favorites", value: "favorites" },
   ],
 } as const;
 
 const statusOptions: Array<{ value: OkamiStatus; label: string; className: string }> = [
-  { value: "watching", label: "Watching", className: "watching" },
+  { value: "watching", label: "Watching / Reading", className: "watching" },
   { value: "completed", label: "Completed", className: "completed" },
   { value: "on_hold", label: "On Hold", className: "hold" },
   { value: "dropped", label: "Dropped", className: "dropped" },
-  { value: "plan_to_watch", label: "Plan to Watch", className: "plan" },
+  { value: "plan_to_watch", label: "Plan to Watch / Read", className: "plan" },
 ];
 
 const sortOptions = ["Date Added", "Score", "Title A–Z", "Year"] as const;
 
-const GENRE_MAP: Record<string, number> = {
+const _GENRE_MAP: Record<string, number> = {
   action: 1,
   adventure: 2,
   comedy: 4,
@@ -140,7 +141,7 @@ function useOutsideClick(ref: RefObject<HTMLElement | null>, onClose: () => void
 
 function statusLabel(status: OkamiStatus) {
   const match = statusOptions.find((option) => option.value === status);
-  return match?.label ?? "Plan to Watch";
+  return match?.label ?? "Plan to Watch / Read";
 }
 
 function statusClass(status: OkamiStatus) {
@@ -148,12 +149,12 @@ function statusClass(status: OkamiStatus) {
   return match?.className ?? "plan";
 }
 
-function entryCategory(entry: OkamiEntry) {
-  const format = entry.format?.toLowerCase?.() ?? "";
-  if (format === "film" || format === "movie") {
+function entryCategory(type: string, format?: string) {
+  const fmt = format?.toLowerCase?.() ?? "";
+  if (fmt.includes("film") || fmt.includes("movie")) {
     return { label: "Film", className: "type-film" };
   }
-  if (entry.type === "manga") {
+  if (type === "manga") {
     return { label: "Manga", className: "type-manga" };
   }
   return { label: "Anime", className: "type-anime" };
@@ -185,6 +186,29 @@ function entryToMedia(entry: OkamiEntry): OkamiMedia {
 function formatScore(score: number | null | undefined) {
   if (!score || score <= 0) return "--";
   return score.toFixed(1);
+}
+
+// ─── Unified Library Item Representation ───
+interface UnifiedLibraryItem {
+  id: string; // franchiseId or legacy key
+  rootMalId: number;
+  activeMalId: number;
+  title: string;
+  cover: string;
+  type: "anime" | "manga" | "both";
+  format: string;
+  year: number;
+  genres: string[];
+  official_score: number;
+  user_score: number | null;
+  status: OkamiStatus;
+  progressLabel: string;
+  progressNum: number;
+  totalNum: number | null;
+  date_added: string;
+  is_favourite: boolean;
+  franchise?: UnifiedFranchiseEntry;
+  legacyEntry?: OkamiEntry;
 }
 
 function ScoreCell({
@@ -387,6 +411,8 @@ function EntryMenu({
   );
 }
 
+// ─── 1. Unified Library View ───
+
 function LibraryView({
   entries,
   franchises,
@@ -411,15 +437,15 @@ function LibraryView({
 }: {
   entries: OkamiEntry[];
   franchises: Record<string, UnifiedFranchiseEntry>;
-  onQuickIncrement: (entry: OkamiEntry) => void;
+  onQuickIncrement: (item: UnifiedLibraryItem) => void;
   activeView: "grid" | "list";
   setActiveView: (value: "grid" | "list") => void;
   activeType: "all" | "anime" | "manga" | "films";
   setActiveType: (value: "all" | "anime" | "manga" | "films") => void;
   activeGenre: string;
   setActiveGenre: (value: string) => void;
-  activeStatus: OkamiStatus | "";
-  setActiveStatus: (value: OkamiStatus | "") => void;
+  activeStatus: OkamiStatus | "favorites" | "";
+  setActiveStatus: (value: OkamiStatus | "favorites" | "") => void;
   sortBy: (typeof sortOptions)[number];
   setSortBy: (value: (typeof sortOptions)[number]) => void;
   onDetail: (media: OkamiMedia) => void;
@@ -428,30 +454,104 @@ function LibraryView({
   onToggleFavourite: (entry: OkamiEntry) => void;
   onExplore: () => void;
   onClearFilters: () => void;
-  onOpenTracker: (entry: OkamiEntry) => void;
+  onOpenTracker: (item: UnifiedLibraryItem) => void;
 }) {
-  const displayedEntries = useMemo(() => {
-    let result = [...entries];
+  // Unify multi-season franchises and legacy entries into single cohesive entries
+  const unifiedItems = useMemo<UnifiedLibraryItem[]>(() => {
+    const items: UnifiedLibraryItem[] = [];
+    const seenRoots = new Set<number>();
+
+    // Process all franchises first
+    for (const franchise of Object.values(franchises)) {
+      seenRoots.add(franchise.rootMalId);
+      const displayInfo = getFranchiseDisplayInfo(franchise);
+
+      const activeMalId =
+        displayInfo.mediaType === "manga"
+          ? (displayInfo.activeMangaMalId || franchise.rootMalId)
+          : (displayInfo.activeSeasonMalId || franchise.rootMalId);
+
+      const matchingEntry = entries.find(
+        (e) => e.id === activeMalId || e.id === franchise.rootMalId
+      );
+
+      items.push({
+        id: franchise.franchiseId,
+        rootMalId: franchise.rootMalId,
+        activeMalId,
+        title: franchise.title,
+        cover: franchise.coverImage,
+        type: displayInfo.mediaType,
+        format: matchingEntry?.format || (displayInfo.mediaType === "manga" ? "Manga" : "TV Series"),
+        year: matchingEntry?.year || 0,
+        genres: franchise.genres?.length ? franchise.genres : matchingEntry?.genres || [],
+        official_score: matchingEntry?.official_score || 0,
+        user_score: matchingEntry?.user_score ?? null,
+        status: displayInfo.overallStatus,
+        progressLabel: displayInfo.progressLabel || "--",
+        progressNum: matchingEntry?.progress || 0,
+        totalNum: matchingEntry?.total ?? null,
+        date_added: new Date(franchise.addedAt || franchise.updatedAt).toISOString(),
+        is_favourite: Boolean(franchise.isFavorite || matchingEntry?.is_favourite),
+        franchise,
+        legacyEntry: matchingEntry,
+      });
+    }
+
+    // Process any legacy entries not yet in franchises
+    for (const entry of entries) {
+      if (seenRoots.has(entry.id)) continue;
+      items.push({
+        id: `legacy_${entry.type}_${entry.id}`,
+        rootMalId: entry.id,
+        activeMalId: entry.id,
+        title: entry.title,
+        cover: entry.cover,
+        type: entry.type,
+        format: entry.format,
+        year: entry.year,
+        genres: entry.genres,
+        official_score: entry.official_score,
+        user_score: entry.user_score,
+        status: entry.status,
+        progressLabel: entry.type === "manga" ? `Ch ${entry.progress}/${entry.total ?? "?"}` : `Ep ${entry.progress}/${entry.total ?? "?"}`,
+        progressNum: entry.progress,
+        totalNum: entry.total,
+        date_added: entry.date_added,
+        is_favourite: entry.is_favourite,
+        legacyEntry: entry,
+      });
+    }
+
+    return items;
+  }, [franchises, entries]);
+
+  const displayedItems = useMemo(() => {
+    let result = [...unifiedItems];
 
     if (activeType !== "all") {
       if (activeType === "films") {
-        result = result.filter((entry) => {
-          const format = entry.format?.toLowerCase?.() ?? "";
-          return format === "film" || format === "movie";
+        result = result.filter((item) => {
+          const fmt = item.format?.toLowerCase?.() ?? "";
+          return fmt.includes("film") || fmt.includes("movie");
         });
       } else {
-        result = result.filter((entry) => entry.type === activeType);
+        result = result.filter((item) => item.type === activeType || item.type === "both");
       }
     }
 
     if (activeGenre) {
-      result = result.filter((entry) =>
-        entry.genres?.some((genre) => genre.toLowerCase() === activeGenre.toLowerCase())
+      result = result.filter((item) =>
+        item.genres?.some((genre) => genre.toLowerCase() === activeGenre.toLowerCase())
       );
     }
 
     if (activeStatus) {
-      result = result.filter((entry) => entry.status === activeStatus);
+      if (activeStatus === "favorites") {
+        result = result.filter((item) => item.is_favourite);
+      } else {
+        result = result.filter((item) => item.status === activeStatus);
+      }
     }
 
     const next = [...result];
@@ -473,7 +573,7 @@ function LibraryView({
         next.sort((a, b) => new Date(b.date_added).getTime() - new Date(a.date_added).getTime());
     }
     return next;
-  }, [entries, activeType, activeGenre, activeStatus, sortBy]);
+  }, [unifiedItems, activeType, activeGenre, activeStatus, sortBy]);
 
   return (
     <>
@@ -512,7 +612,7 @@ function LibraryView({
             </button>
           </div>
         </div>
-        <div className="page-sub">Your full personal collection</div>
+        <div className="page-sub">Your personal anime & manga franchise vault</div>
       </div>
 
       <div className="filter-bar">
@@ -532,7 +632,7 @@ function LibraryView({
                 key={item.value}
                 type="button"
                 className={`pill ${typeClass ? `pill-type ${typeClass}` : ""} ${activeType === item.value ? "active" : ""}`}
-                onClick={() => setActiveType(activeType === item.value ? "all" : item.value)}
+                onClick={() => setActiveType(activeType === item.value ? "all" : (item.value as "all" | "anime" | "manga" | "films"))}
               >
                 {item.label}
               </button>
@@ -566,7 +666,7 @@ function LibraryView({
               type="button"
               className={`pill ${activeStatus === item.value ? "active" : ""}`}
               onClick={() =>
-                setActiveStatus(activeStatus === item.value ? "" : (item.value as OkamiStatus))
+                setActiveStatus(activeStatus === item.value ? "" : (item.value as OkamiStatus | "favorites"))
               }
             >
               {item.label}
@@ -590,58 +690,52 @@ function LibraryView({
       </div>
 
       <div className="count-row" suppressHydrationWarning>
-        <span className="count-label">Entries</span>
-        <span className="count-num" suppressHydrationWarning>{String(entries.length).padStart(3, "0")}</span>
+        <span className="count-label">Tracked Franchises</span>
+        <span className="count-num" suppressHydrationWarning>{String(unifiedItems.length).padStart(3, "0")}</span>
         <span className="count-label" style={{ marginLeft: 16 }}>
           Showing
         </span>
-        <span className="count-num" suppressHydrationWarning>{String(displayedEntries.length).padStart(2, "0")}</span>
+        <span className="count-num" suppressHydrationWarning>{String(displayedItems.length).padStart(2, "0")}</span>
       </div>
 
-      {entries.length === 0 ? (
+      {unifiedItems.length === 0 ? (
         <div className="empty-state empty-state-large">
           <div className="empty-title">Your vault is empty</div>
-          <div className="empty-sub">Add titles from Explore to start tracking.</div>
+          <div className="empty-sub">Discover and add titles from Explore to start tracking.</div>
           <button className="empty-action" type="button" onClick={onExplore}>
             Explore Now →
           </button>
         </div>
-      ) : displayedEntries.length === 0 ? (
+      ) : displayedItems.length === 0 ? (
         <div className="empty-state">
           <div className="empty-title">No entries match this filter</div>
-          <div className="empty-sub">Try adjusting your filters or add more titles.</div>
+          <div className="empty-sub">Try adjusting your filters or search keywords.</div>
           <button className="empty-link" type="button" onClick={onClearFilters}>
             Clear Filters
           </button>
         </div>
       ) : activeView === "grid" ? (
         <div className="grid library-grid">
-          {displayedEntries.map((entry) => {
-            const category = entryCategory(entry);
-            const franchise = findFranchiseByMalId(franchises, entry.id);
-            const displayInfo = franchise ? getFranchiseDisplayInfo(franchise) : null;
-            const pointerBadge =
-              displayInfo?.progressLabel ||
-              (entry.type === "manga"
-                ? `Ch ${entry.progress} / ${entry.total ?? "?"}`
-                : `Ep ${entry.progress} / ${entry.total ?? "?"}`);
+          {displayedItems.map((item) => {
+            const category = entryCategory(item.type, item.format);
+            const isManga = item.type === "manga";
 
             return (
-              <article className="card" key={entryKey(entry)}>
+              <article className="card" key={item.id}>
                 <div
                   className="card-img-wrap"
                   role="button"
                   tabIndex={0}
-                  onClick={() => onOpenTracker(entry)}
+                  onClick={() => onOpenTracker(item)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      onOpenTracker(entry);
+                      onOpenTracker(item);
                     }
                   }}
                 >
-                  <img className="card-img" src={entry.cover} alt={entry.title} />
-                  <div className="franchise-pointer-badge">{pointerBadge}</div>
+                  <img className="card-img" src={item.cover} alt={item.title} />
+                  <div className="franchise-pointer-badge">{item.progressLabel}</div>
                   <div className="card-img-overlay" />
                   <div className="card-actions">
                     <button
@@ -649,51 +743,69 @@ function LibraryView({
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        onQuickIncrement(entry);
+                        onQuickIncrement(item);
                       }}
-                      title="Quick +1 progress"
+                      title="Quick +1 progress (with auto-advance)"
                     >
-                      +1 {entry.type === "manga" ? "Ch" : "Ep"}
+                      +1 {isManga ? "Ch" : "Ep"}
                     </button>
+                    {item.legacyEntry ? (
+                      <button
+                        className="card-action-btn"
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onEdit(item.legacyEntry!);
+                        }}
+                      >
+                        Update
+                      </button>
+                    ) : null}
                     <button
                       className="card-action-btn"
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        onEdit(entry);
-                      }}
-                    >
-                      Update
-                    </button>
-                    <button
-                      className="card-action-btn"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onDetail(entryToMedia(entry));
+                        onDetail({
+                          id: item.activeMalId,
+                          type: isManga ? "manga" : "anime",
+                          title: item.title,
+                          cover: item.cover,
+                          year: item.year,
+                          format: item.format,
+                          genres: item.genres,
+                          official_score: item.official_score,
+                          total: item.totalNum,
+                        });
                       }}
                     >
                       Info
                     </button>
                   </div>
-                  <div className={`score-badge ${entry.official_score >= 9 ? "gold" : ""}`}>
-                    {formatScore(entry.official_score)}
+                  <div className={`score-badge ${item.official_score >= 8.5 ? "gold" : ""}`}>
+                    {formatScore(item.official_score)}
                   </div>
-                  <div className={`status-badge ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</div>
+                  <div className={`status-badge ${statusClass(item.status)}`}>{statusLabel(item.status)}</div>
                 </div>
                 <div className="card-info">
                   <Link
                     className="card-title"
-                    href={entry.type === "anime" ? `/anime/${entry.id}/info` : `/manga/${entry.id}/info`}
+                    href={isManga ? `/manga/${item.activeMalId}/info` : `/anime/${item.activeMalId}/info`}
                   >
-                    {entry.title}
+                    {item.title}
                   </Link>
                   <div className="card-meta">
                     <span className={`type-chip ${category.className}`}>{category.label}</span>
                     <span className="meta-dot">•</span>
-                    <span>{entry.year || "--"}</span>
+                    <span>{item.year || "--"}</span>
                     <span className="meta-dot">•</span>
-                    <span>{entry.format}</span>
+                    <span>{item.format}</span>
+                    {item.is_favourite ? (
+                      <>
+                        <span className="meta-dot">•</span>
+                        <span style={{ color: "var(--accent)" }}>★</span>
+                      </>
+                    ) : null}
                   </div>
                 </div>
               </article>
@@ -711,43 +823,58 @@ function LibraryView({
             <span>Official</span>
             <span>Status</span>
             <span>Progress</span>
+            <span>Quick +1</span>
             <span>Date Added</span>
             <span>⋯</span>
           </div>
-          {displayedEntries.map((entry, index) => {
-            const category = entryCategory(entry);
+          {displayedItems.map((item, index) => {
+            const category = entryCategory(item.type, item.format);
+            const isManga = item.type === "manga";
+
             return (
               <div
-                key={entryKey(entry)}
-                className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${entry.status === "watching" ? "row-watching" : ""}`}
+                key={item.id}
+                className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${item.status === "watching" ? "row-watching" : ""}`}
               >
                 <span className="mono">{String(index + 1).padStart(2, "0")}</span>
                 <Link
-                  aria-label={`Open tracker for ${entry.title}`}
-                  href={entry.type === "anime" ? `/anime/${entry.id}` : `/manga/${entry.id}`}
+                  aria-label={`Open tracker for ${item.title}`}
+                  href={isManga ? `/manga/${item.activeMalId}` : `/anime/${item.activeMalId}`}
                 >
-                  <img className="row-cover" src={entry.cover} alt={entry.title} />
+                  <img className="row-cover" src={item.cover} alt={item.title} />
                 </Link>
                 <Link
                   className="title-cell"
-                  href={entry.type === "anime" ? `/anime/${entry.id}/info` : `/manga/${entry.id}/info`}
+                  href={isManga ? `/manga/${item.activeMalId}/info` : `/anime/${item.activeMalId}/info`}
                 >
-                  {entry.title}
+                  {item.title}
                 </Link>
                 <span className={`type-chip ${category.className}`}>{category.label}</span>
-                <span className="mono">{entry.user_score ?? "--"}</span>
-                <span className="mono">{formatScore(entry.official_score)}</span>
-                <span className={`status-chip ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span>
-                <span className="mono">
-                  {entry.progress} / {entry.total ?? "--"}
-                </span>
-                <span className="mono">{entry.date_added.slice(0, 10)}</span>
-                <EntryMenu
-                  entry={entry}
-                  onEdit={onEdit}
-                  onRemove={onRemove}
-                  onToggleFavourite={onToggleFavourite}
-                />
+                <span className="mono">{item.user_score ?? "--"}</span>
+                <span className="mono">{formatScore(item.official_score)}</span>
+                <span className={`status-chip ${statusClass(item.status)}`}>{statusLabel(item.status)}</span>
+                <span className="mono">{item.progressLabel}</span>
+                <div>
+                  <button
+                    className="card-action-btn quick-plus"
+                    style={{ padding: "4px 8px", fontSize: 11 }}
+                    type="button"
+                    onClick={() => onQuickIncrement(item)}
+                  >
+                    +1 {isManga ? "Ch" : "Ep"}
+                  </button>
+                </div>
+                <span className="mono">{item.date_added.slice(0, 10)}</span>
+                {item.legacyEntry ? (
+                  <EntryMenu
+                    entry={item.legacyEntry}
+                    onEdit={onEdit}
+                    onRemove={onRemove}
+                    onToggleFavourite={onToggleFavourite}
+                  />
+                ) : (
+                  <span />
+                )}
               </div>
             );
           })}
@@ -756,6 +883,377 @@ function LibraryView({
     </>
   );
 }
+
+// ─── 2. Explore & Real-Time Discovery View ───
+
+const EXPLORE_GENRES = [
+  "Action",
+  "Adventure",
+  "Comedy",
+  "Drama",
+  "Fantasy",
+  "Horror",
+  "Mystery",
+  "Romance",
+  "Sci-Fi",
+  "Slice of Life",
+  "Sports",
+  "Supernatural",
+  "Thriller",
+] as const;
+
+const SORT_OPTIONS: Array<{ label: string; value: "trending" | "score" | "popular" | "newest" | "title" }> = [
+  { label: "Trending", value: "trending" },
+  { label: "Top Rated", value: "score" },
+  { label: "Most Popular", value: "popular" },
+  { label: "Recently Added", value: "newest" },
+  { label: "Title A–Z", value: "title" },
+];
+
+const ANIME_FORMATS = [
+  { label: "All Formats", value: "" },
+  { label: "TV Series", value: "tv" },
+  { label: "Film", value: "movie" },
+  { label: "OVA / Special", value: "ova" },
+];
+
+const MANGA_FORMATS = [
+  { label: "All Formats", value: "" },
+  { label: "Manga", value: "manga" },
+  { label: "Light Novel", value: "novel" },
+  { label: "One-Shot", value: "one_shot" },
+];
+
+const STATUS_FILTERS = [
+  { label: "All Status", value: "" },
+  { label: "Airing / Publishing", value: "airing" },
+  { label: "Completed", value: "finished" },
+  { label: "Upcoming", value: "upcoming" },
+];
+
+const SEASONS = ["Winter", "Spring", "Summer", "Fall"] as const;
+
+const QUICK_TAGS_ANIME = [
+  "Frieren",
+  "Attack on Titan",
+  "Solo Leveling",
+  "Jujutsu Kaisen",
+  "Demon Slayer",
+  "Chainsaw Man",
+  "Cyberpunk",
+  "Action",
+  "Sci-Fi",
+  "Romance",
+];
+
+const QUICK_TAGS_MANGA = [
+  "Berserk",
+  "One Piece",
+  "Vagabond",
+  "Vinland Saga",
+  "Solo Leveling",
+  "Chainsaw Man",
+  "Tokyo Ghoul",
+  "Action",
+  "Dark Fantasy",
+  "Seinen",
+];
+
+// ── Unified Explore Card Component ──
+function ExploreMediaCard({
+  media,
+  entryMap,
+  onAdd,
+  onDetail,
+  index,
+}: {
+  media: OkamiMedia;
+  entryMap: Map<string, OkamiEntry>;
+  onAdd: (media: OkamiMedia) => void;
+  onDetail: (media: OkamiMedia) => void;
+  index?: number;
+}) {
+  const inLibrary = entryMap.has(mediaKey(media));
+  const isAnime = media.type === "anime";
+  const infoUrl = isAnime ? `/anime/${media.id}/info` : `/manga/${media.id}/info`;
+  const isHighScoring = media.official_score >= 8.5;
+  const category = entryCategory(media.type, media.format);
+
+  return (
+    <article className="card" key={mediaKey(media)}>
+      <div
+        className="card-img-wrap"
+        role="button"
+        tabIndex={0}
+        onClick={() => onDetail(media)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onDetail(media);
+          }
+        }}
+      >
+        <img
+          className="card-img"
+          src={media.cover}
+          alt={media.title}
+          loading="lazy"
+        />
+        <div className="card-img-overlay" />
+
+        {/* Score badge at top right */}
+        <div className={`score-badge ${isHighScoring ? "gold" : ""}`}>
+          ★ {formatScore(media.official_score)}
+        </div>
+
+        {/* Status badge if already in vault */}
+        {inLibrary ? (
+          <div className="status-badge watching">In Vault</div>
+        ) : null}
+
+        {/* Actions overlay on hover */}
+        <div className="card-actions">
+          <button
+            className={`card-action-btn ${inLibrary ? "in-library" : "primary"}`}
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (inLibrary) {
+                onDetail(media);
+              } else {
+                onAdd(media);
+              }
+            }}
+          >
+            {inLibrary ? "In Vault ✓" : "+ Add"}
+          </button>
+          <button
+            className="card-action-btn"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDetail(media);
+            }}
+          >
+            Info
+          </button>
+        </div>
+      </div>
+
+      <div className="card-info">
+        <Link className="card-title" href={infoUrl} title={media.title}>
+          {media.title}
+        </Link>
+        <div className="card-meta">
+          <span className={`type-chip ${category.className}`}>{category.label}</span>
+          <span className="meta-dot">•</span>
+          <span>{media.year || "--"}</span>
+          <span className="meta-dot">•</span>
+          <span>{media.genres[0] || (isAnime ? "Anime" : "Manga")}</span>
+          {typeof index === "number" && (
+            <>
+              <span className="meta-dot">•</span>
+              <span style={{ color: "var(--accent)", fontWeight: 700 }}>#{String(index + 1).padStart(2, "0")}</span>
+            </>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+// ── Custom Multi-Row & Multi-Column Category Section with Slider ──
+function ExploreCategorySection({
+  title,
+  items,
+  entryMap,
+  onAdd,
+  onDetail,
+}: {
+  title: string;
+  items: OkamiMedia[];
+  entryMap: Map<string, OkamiEntry>;
+  onAdd: (media: OkamiMedia) => void;
+  onDetail: (media: OkamiMedia) => void;
+}) {
+  const [batchPage, setBatchPage] = useState(1);
+  const pageSize = 10; // 2 rows of 5 columns
+  const totalBatches = Math.max(1, Math.ceil(items.length / pageSize));
+
+  const currentItems = useMemo(() => {
+    const start = (batchPage - 1) * pageSize;
+    return items.slice(start, start + pageSize);
+  }, [items, batchPage, pageSize]);
+
+  return (
+    <section className="explore-category-section">
+      <div className="explore-category-header">
+        <div className="explore-category-title-wrap">
+          <h3 className="section-title" style={{ margin: 0 }}>{title}</h3>
+          <span className="explore-category-count">({items.length} titles)</span>
+        </div>
+
+        {/* Custom Slider / Batch Navigation */}
+        {totalBatches > 1 && (
+          <div className="explore-batch-nav">
+            <button
+              type="button"
+              className="explore-batch-btn"
+              disabled={batchPage <= 1}
+              onClick={() => setBatchPage((prev) => Math.max(1, prev - 1))}
+              title="Previous 10 items"
+            >
+              ◀ Prev
+            </button>
+            <span className="explore-batch-page">
+              Page 0{batchPage} / 0{totalBatches}
+            </span>
+            <button
+              type="button"
+              className="explore-batch-btn"
+              disabled={batchPage >= totalBatches}
+              onClick={() => setBatchPage((prev) => Math.min(totalBatches, prev + 1))}
+              title="Next 10 items"
+            >
+              Next ▶
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Multi-Row x Multi-Column Grid (2 rows x 5 columns) */}
+      <div className="explore-grid">
+        {currentItems.map((item, idx) => (
+          <ExploreMediaCard
+            key={mediaKey(item)}
+            media={item}
+            entryMap={entryMap}
+            onAdd={onAdd}
+            onDetail={onDetail}
+            index={(batchPage - 1) * pageSize + idx}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ── Custom Interactive Full-Width Hero Slider ──
+function CustomHeroSlider({
+  spotlights,
+  onAdd,
+  onDetail,
+}: {
+  spotlights: OkamiMedia[];
+  onAdd: (media: OkamiMedia) => void;
+  onDetail: (media: OkamiMedia) => void;
+}) {
+  const [slideIndex, setSlideIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+
+  useEffect(() => {
+    if (spotlights.length <= 1 || isPaused) return;
+    const interval = setInterval(() => {
+      setSlideIndex((prev) => (prev + 1) % spotlights.length);
+    }, 6500);
+    return () => clearInterval(interval);
+  }, [spotlights.length, isPaused]);
+
+  if (!spotlights.length) return null;
+  const current = spotlights[slideIndex] || spotlights[0];
+
+  return (
+    <div
+      className="explore-hero-slider"
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+    >
+      {/* Background Banner */}
+      <div
+        className="explore-hero-backdrop"
+        style={{
+          backgroundImage: `url(${current.banner || current.cover})`,
+        }}
+      />
+      <div className="explore-hero-overlay" />
+
+      {/* Custom Slider Navigation Controls */}
+      <div className="explore-slider-controls">
+        <button
+          type="button"
+          className="explore-slider-btn"
+          onClick={() =>
+            setSlideIndex((prev) => (prev - 1 + spotlights.length) % spotlights.length)
+          }
+          title="Previous Spotlight"
+        >
+          ◀
+        </button>
+        <span className="explore-slider-indicator">
+          0{slideIndex + 1} / 0{spotlights.length}
+        </span>
+        <button
+          type="button"
+          className="explore-slider-btn"
+          onClick={() => setSlideIndex((prev) => (prev + 1) % spotlights.length)}
+          title="Next Spotlight"
+        >
+          ▶
+        </button>
+        <div style={{ display: "flex", gap: 5, marginLeft: 6 }}>
+          {spotlights.map((_, i) => (
+            <div
+              key={i}
+              className={`explore-slider-dot ${i === slideIndex ? "active" : ""}`}
+              onClick={() => setSlideIndex(i)}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Slide Content */}
+      <div className="explore-hero-content">
+        <div className="explore-hero-stamp">
+          ★ {formatScore(current.official_score)} • {current.format || (current.type === "anime" ? "TV SERIES" : "MANGA")}
+        </div>
+
+        <h2 className="explore-hero-title">{current.title}</h2>
+
+        <div className="explore-hero-tags">
+          <span className="tag">{current.format || (current.type === "anime" ? "TV" : "MANGA")}</span>
+          {current.year ? <span className="tag">{current.year}</span> : null}
+          {current.genres.slice(0, 3).map((genre) => (
+            <span key={genre} className="tag">{genre}</span>
+          ))}
+        </div>
+
+        {current.synopsis && (
+          <p className="explore-hero-synopsis">{current.synopsis}</p>
+        )}
+
+        <div className="explore-hero-actions">
+          <button
+            className="hero-btn"
+            type="button"
+            onClick={() => onAdd(current)}
+          >
+            + Add to Vault
+          </button>
+          <button
+            className="card-action-btn"
+            style={{ padding: "8px 16px", fontSize: "11px" }}
+            type="button"
+            onClick={() => onDetail(current)}
+          >
+            Details →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── 2. Explore View (Unified Theme) ───
 
 function ExploreView({
   entryMap,
@@ -766,392 +1264,607 @@ function ExploreView({
   onAdd: (media: OkamiMedia) => void;
   onDetail: (media: OkamiMedia) => void;
 }) {
-  const [activeGenres, setActiveGenres] = useState<string[]>([]);
-  const [activeSeason, setActiveSeason] = useState("");
-  const [activeStudio, setActiveStudio] = useState("");
   const [activeType, setActiveType] = useState<MediaType>("anime");
   const [query, setQuery] = useState("");
+  const [activeSort, setActiveSort] = useState<"trending" | "score" | "popular" | "newest" | "title">("trending");
+  const [activeGenres, setActiveGenres] = useState<string[]>([]);
+  const [activeFormat, setActiveFormat] = useState("");
+  const [activeSeason, setActiveSeason] = useState("");
+  const [activeStatus, setActiveStatus] = useState("");
+
   const [results, setResults] = useState<OkamiMedia[]>([]);
-  const [topAnime, setTopAnime] = useState<OkamiMedia[]>([]);
-  const [topManga, setTopManga] = useState<OkamiMedia[]>([]);
-  const [seasonal, setSeasonal] = useState<OkamiMedia[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalResults, setTotalResults] = useState<number | null>(null);
+  const [hasNextPage, setHasNextPage] = useState(false);
   const [loadingSearch, setLoadingSearch] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // Categorized Anime lists (20 items each)
+  const [seasonal, setSeasonal] = useState<OkamiMedia[]>([]);
+  const [topAnime, setTopAnime] = useState<OkamiMedia[]>([]);
+  const [topMovies, setTopMovies] = useState<OkamiMedia[]>([]);
+  const [actionAnime, setActionAnime] = useState<OkamiMedia[]>([]);
+  const [psychAnime, setPsychAnime] = useState<OkamiMedia[]>([]);
+
+  // Categorized Manga lists (20 items each)
+  const [topManga, setTopManga] = useState<OkamiMedia[]>([]);
+  const [topNovels, setTopNovels] = useState<OkamiMedia[]>([]);
+  const [actionManga, setActionManga] = useState<OkamiMedia[]>([]);
+  const [romanceManga, setRomanceManga] = useState<OkamiMedia[]>([]);
+
   const [loadingTop, setLoadingTop] = useState(true);
+  const [topError, setTopError] = useState(false);
 
-  const debouncedQuery = useDebounce(query, 600);
-  const genreIds = useMemo(
-    () => activeGenres.map((genre) => GENRE_MAP[genre]).filter(Boolean),
-    [activeGenres]
-  );
-  const shouldSearch =
-    debouncedQuery.trim().length > 0 || activeGenres.length > 0 || Boolean(activeSeason) || Boolean(activeStudio);
+  const debouncedQuery = useDebounce(query, 300);
 
-  useEffect(() => {
+  const isSearchMode = useMemo(() => {
+    return (
+      debouncedQuery.trim().length > 0 ||
+      activeGenres.length > 0 ||
+      Boolean(activeSeason) ||
+      Boolean(activeFormat) ||
+      Boolean(activeStatus) ||
+      activeSort !== "trending"
+    );
+  }, [debouncedQuery, activeGenres, activeSeason, activeFormat, activeStatus, activeSort]);
+
+  const loadDiscovery = useCallback(() => {
     let active = true;
-    Promise.all([fetchTop("anime"), fetchTop("manga"), fetchSeason()])
-      .then(([anime, manga, season]) => {
+    Promise.resolve().then(() => {
+      if (!active) return;
+      setLoadingTop(true);
+      setTopError(false);
+    });
+
+    Promise.all([
+      // Anime categories
+      fetchSeason({ limit: 20 }).catch(() => []),
+      fetchTop("anime", { limit: 20 }).catch(() => []),
+      fetchTop("anime", { filter: "movie", limit: 20 }).catch(() => []),
+      searchMedia("anime", "", { genres: "Action", limit: 20 }).then(r => r.data).catch(() => []),
+      searchMedia("anime", "", { genres: "Psychological", limit: 20 }).then(r => r.data).catch(() => []),
+
+      // Manga categories
+      fetchTop("manga", { limit: 20 }).catch(() => []),
+      fetchTop("manga", { filter: "novels", limit: 20 }).catch(() => []),
+      searchMedia("manga", "", { genres: "Action", limit: 20 }).then(r => r.data).catch(() => []),
+      searchMedia("manga", "", { genres: "Romance", limit: 20 }).then(r => r.data).catch(() => []),
+    ])
+      .then(([seasonData, animeData, movieData, actAnimeData, psychData, mangaData, novelData, actMangaData, romMangaData]) => {
         if (!active) return;
-        setTopAnime(anime);
-        setTopManga(manga);
-        setSeasonal(season);
+        setSeasonal(seasonData);
+        setTopAnime(animeData);
+        setTopMovies(movieData);
+        setActionAnime(actAnimeData);
+        setPsychAnime(psychData);
+
+        setTopManga(mangaData);
+        setTopNovels(novelData);
+        setActionManga(actMangaData);
+        setRomanceManga(romMangaData);
+
+        if (seasonData.length === 0 && animeData.length === 0 && mangaData.length === 0) {
+          setTopError(true);
+        }
       })
       .catch(() => {
         if (!active) return;
-        setTopAnime([]);
-        setTopManga([]);
-        setSeasonal([]);
+        setTopError(true);
       })
       .finally(() => {
         if (active) setLoadingTop(false);
       });
+
     return () => {
       active = false;
     };
   }, []);
 
   useEffect(() => {
+    return loadDiscovery();
+  }, [loadDiscovery]);
+
+  // Search effect
+  useEffect(() => {
     let active = true;
-    if (!shouldSearch) return () => {
-      active = false;
-    };
-    searchMedia(activeType, debouncedQuery, {
-      genres: genreIds.length ? genreIds.join(",") : undefined,
-      season: activeSeason || undefined,
-      studio: activeStudio || undefined,
-      limit: 20,
-    })
-      .then((data) => {
-        if (!active) return;
-        setResults(data);
-      })
-      .catch(() => {
+    if (!isSearchMode) {
+      Promise.resolve().then(() => {
         if (!active) return;
         setResults([]);
+        setPage(1);
+        setHasNextPage(false);
+        setTotalResults(null);
+        setLoadingSearch(false);
+      });
+      return () => {
+        active = false;
+      };
+    }
+
+    Promise.resolve().then(() => {
+      if (!active) return;
+      setLoadingSearch(true);
+      setPage(1);
+    });
+
+    const controller = new AbortController();
+
+    searchMedia(activeType, debouncedQuery, {
+      genres: activeGenres.length > 0 ? activeGenres.join(",") : undefined,
+      season: activeSeason || undefined,
+      sort: activeSort !== "trending" ? activeSort : undefined,
+      format: activeFormat || undefined,
+      status: activeStatus || undefined,
+      page: 1,
+      limit: 25,
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!active) return;
+        setResults(res.data || []);
+        setHasNextPage(Boolean(res.pagination?.has_next_page));
+        setTotalResults(res.pagination?.total ?? (res.data ? res.data.length : null));
+      })
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        if (!active) return;
+        setResults([]);
+        setHasNextPage(false);
+        setTotalResults(0);
       })
       .finally(() => {
         if (active) setLoadingSearch(false);
       });
+
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [debouncedQuery, activeGenres, activeSeason, activeStudio, activeType, genreIds, shouldSearch]);
+  }, [
+    debouncedQuery,
+    activeType,
+    activeSort,
+    activeGenres,
+    activeFormat,
+    activeSeason,
+    activeStatus,
+    isSearchMode,
+  ]);
 
-  const featured = seasonal[0] ?? topAnime[0];
-  const heroSide = (seasonal.length ? seasonal.slice(1, 3) : topAnime.slice(1, 3));
-  const seasonalList = seasonal.length ? seasonal : topAnime;
-  const searchResults = shouldSearch ? results : [];
-  const searchLoading = shouldSearch ? loadingSearch : false;
+  const handleLoadMore = async () => {
+    if (loadingMore || !hasNextPage) return;
+    setLoadingMore(true);
+    const nextPage = page + 1;
+    try {
+      const res = await searchMedia(activeType, debouncedQuery, {
+        genres: activeGenres.length > 0 ? activeGenres.join(",") : undefined,
+        season: activeSeason || undefined,
+        sort: activeSort !== "trending" ? activeSort : undefined,
+        format: activeFormat || undefined,
+        status: activeStatus || undefined,
+        page: nextPage,
+        limit: 25,
+      });
+      const newItems = res.data || [];
+      setResults((prev) => [...prev, ...newItems]);
+      setPage(nextPage);
+      setHasNextPage(Boolean(res.pagination?.has_next_page));
+    } catch {
+      // ignore
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const handleResetFilters = () => {
+    setQuery("");
+    setActiveGenres([]);
+    setActiveSeason("");
+    setActiveFormat("");
+    setActiveStatus("");
+    setActiveSort("trending");
+  };
+
+  const handleQuickTagClick = (tag: string) => {
+    if ((EXPLORE_GENRES as readonly string[]).includes(tag)) {
+      setActiveGenres((prev) =>
+        prev.includes(tag) ? prev.filter((g) => g !== tag) : [...prev, tag]
+      );
+    } else {
+      setQuery(tag);
+    }
+  };
+
+  const isAnime = activeType === "anime";
+  const quickTags = isAnime ? QUICK_TAGS_ANIME : QUICK_TAGS_MANGA;
+  const formatOptions = isAnime ? ANIME_FORMATS : MANGA_FORMATS;
+
+  // Curate 5 top spotlight items for the full-width interactive slider
+  const spotlights = useMemo(() => {
+    if (isAnime) {
+      const list = [...seasonal.slice(0, 3), ...topAnime.slice(0, 2)];
+      return list.length ? list : topAnime.slice(0, 5);
+    }
+    const list = [...topManga.slice(0, 4), ...topNovels.slice(0, 1)];
+    return list.length ? list : topManga.slice(0, 5);
+  }, [isAnime, seasonal, topAnime, topManga, topNovels]);
+
+  const countActiveFilters =
+    (debouncedQuery.trim() ? 1 : 0) +
+    activeGenres.length +
+    (activeSeason ? 1 : 0) +
+    (activeFormat ? 1 : 0) +
+    (activeStatus ? 1 : 0) +
+    (activeSort !== "trending" ? 1 : 0);
 
   return (
-    <>
+    <div className="explore-view">
+      {/* ── Page Header ── */}
       <div className="page-header">
         <div className="page-title-row">
-          <span className="page-title-kanji">探</span>
-          <span className="page-title-slash">/</span>
-          <span className="page-title">EXPLORE</span>
+          <span className="page-kanji">探</span>
+          <h1 className="page-title">EXPLORE</h1>
+          <div className="view-toggle" style={{ marginLeft: "auto", display: "flex", gap: "6px" }}>
+            <button
+              type="button"
+              className={`pill pill-type type-anime ${activeType === "anime" ? "active" : ""}`}
+              onClick={() => {
+                setActiveType("anime");
+                setActiveFormat("");
+              }}
+            >
+              Anime Catalog
+            </button>
+            <button
+              type="button"
+              className={`pill pill-type type-manga ${activeType === "manga" ? "active" : ""}`}
+              onClick={() => {
+                setActiveType("manga");
+                setActiveFormat("");
+              }}
+            >
+              Manga Catalog
+            </button>
+          </div>
         </div>
-        <div className="page-sub">Search and discover the vault</div>
+        <div className="page-sub">Discover trending masterworks, seasonal broadcasts, and uncover hidden gems</div>
       </div>
 
+      {/* ── Standard Search Bar ── */}
       <div className="search-bar">
         <span className="search-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8" />
-            <path d="m21 21-4.35-4.35" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
         </span>
         <input
           className="search-input"
-          placeholder="SEARCH TITLE, AUTHOR, STUDIO..."
+          placeholder={`Search ${activeType === "anime" ? "anime" : "manga"} by title, studio, author, or genre...`}
           value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setLoadingSearch(true);
-          }}
+          onChange={(event) => setQuery(event.target.value)}
         />
-        <div className="view-toggle">
-          <button className="view-btn active" type="button" aria-label="Grid view">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="3" y="3" width="7" height="7" />
-              <rect x="14" y="3" width="7" height="7" />
-              <rect x="3" y="14" width="7" height="7" />
-              <rect x="14" y="14" width="7" height="7" />
-            </svg>
+        {query ? (
+          <button
+            type="button"
+            className="search-clear-btn"
+            onClick={() => setQuery("")}
+            title="Clear search"
+          >
+            ✕
           </button>
-          <button className="view-btn" type="button" aria-label="List view">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
-          </button>
-        </div>
+        ) : null}
       </div>
 
-      <div className="explore-filters">
+      {/* ── Trending Quick Chips ── */}
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px", marginBottom: "14px" }}>
+        <span className="filter-label" style={{ marginRight: "4px" }}>Trending:</span>
+        {quickTags.map((tag) => {
+          const isActive = query.toLowerCase() === tag.toLowerCase() || activeGenres.includes(tag);
+          return (
+            <button
+              key={tag}
+              type="button"
+              className={`pill ${isActive ? "active" : ""}`}
+              onClick={() => handleQuickTagClick(tag)}
+            >
+              {tag}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Filter Matrix Bar ── */}
+      <div className="filter-bar" style={{ flexWrap: "wrap", gap: "10px", padding: "10px 14px", marginBottom: "20px" }}>
+        {/* Sort */}
         <div className="filter-section">
-          <span className="filter-label">Genre</span>
-          {[
-            { label: "Action", value: "action" },
-            { label: "Fantasy", value: "fantasy" },
-            { label: "Seinen", value: "seinen" },
-            { label: "Romance", value: "romance" },
-          ].map((item) => (
+          <span className="filter-label">Sort</span>
+          {SORT_OPTIONS.map((item) => (
             <button
               key={item.value}
-              className={`pill ${activeGenres.includes(item.value) ? "active" : ""}`}
+              className={`pill ${activeSort === item.value ? "active" : ""}`}
+              type="button"
+              onClick={() => setActiveSort(item.value)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="filter-divider" />
+
+        {/* Format */}
+        <div className="filter-section">
+          <span className="filter-label">Format</span>
+          {formatOptions.map((item) => (
+            <button
+              key={item.label}
+              className={`pill ${activeFormat === item.value ? "active" : ""}`}
+              type="button"
+              onClick={() => setActiveFormat(activeFormat === item.value ? "" : item.value)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="filter-divider" />
+
+        {/* Status */}
+        <div className="filter-section">
+          <span className="filter-label">Status</span>
+          {STATUS_FILTERS.map((item) => (
+            <button
+              key={item.label}
+              className={`pill ${activeStatus === item.value ? "active" : ""}`}
+              type="button"
+              onClick={() => setActiveStatus(activeStatus === item.value ? "" : item.value)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Season (anime only) */}
+        {isAnime && (
+          <>
+            <div className="filter-divider" />
+            <div className="filter-section">
+              <span className="filter-label">Season</span>
+              {SEASONS.map((item) => (
+                <button
+                  key={item}
+                  className={`pill ${activeSeason === item ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setActiveSeason(activeSeason === item ? "" : item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        <div className="filter-divider" />
+
+        {/* Genres */}
+        <div className="filter-section" style={{ flexWrap: "wrap", width: "100%", marginTop: "4px" }}>
+          <span className="filter-label">Genres</span>
+          {EXPLORE_GENRES.map((genre) => (
+            <button
+              key={genre}
+              className={`pill ${activeGenres.includes(genre) ? "active" : ""}`}
               type="button"
               onClick={() => {
-                setLoadingSearch(true);
                 setActiveGenres((prev) =>
-                  prev.includes(item.value) ? prev.filter((genre) => genre !== item.value) : [...prev, item.value]
+                  prev.includes(genre) ? prev.filter((g) => g !== genre) : [...prev, genre]
                 );
               }}
             >
-              {item.label}
-            </button>
-          ))}
-        </div>
-        <div className="filter-divider" />
-        <div className="filter-section">
-          <span className="filter-label">Season</span>
-          {["Winter", "Spring", "Summer", "Fall"].map((item) => (
-            <button
-              key={item}
-              className={`pill ${activeSeason === item ? "active" : ""}`}
-              type="button"
-              onClick={() => {
-                setLoadingSearch(true);
-                setActiveSeason(activeSeason === item ? "" : item);
-              }}
-            >
-              {item}
-            </button>
-          ))}
-        </div>
-        <div className="filter-divider" />
-        <div className="filter-section">
-          <span className="filter-label">Studio</span>
-          {["Bones", "Madhouse", "Wit", "MAPPA"].map((item) => (
-            <button
-              key={item}
-              className={`pill ${activeStudio === item ? "active" : ""}`}
-              type="button"
-              onClick={() => {
-                setLoadingSearch(true);
-                setActiveStudio(activeStudio === item ? "" : item);
-              }}
-            >
-              {item}
-            </button>
-          ))}
-        </div>
-        <div className="filter-divider" />
-        <div className="filter-section">
-          <span className="filter-label">Type</span>
-          {[
-            { label: "Anime", value: "anime" },
-            { label: "Manga", value: "manga" },
-          ].map((item) => (
-            <button
-              key={item.value}
-              className={`pill ${activeType === item.value ? "active" : ""}`}
-              type="button"
-              onClick={() => {
-                setLoadingSearch(true);
-                setActiveType(item.value as MediaType);
-              }}
-            >
-              {item.label}
+              {genre}
             </button>
           ))}
         </div>
       </div>
 
-      {!shouldSearch ? (
-        <>
-          <div className="hero-grid">
-            <div
-              className="hero-main"
-              role={featured ? "button" : undefined}
-              tabIndex={featured ? 0 : undefined}
-              onClick={() => {
-                if (featured) onDetail(featured);
-              }}
-              onKeyDown={(event) => {
-                if (!featured) return;
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onDetail(featured);
-                }
-              }}
-              style={{
-                backgroundImage: `url(${featured?.cover || "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&q=80"})`,
-              }}
-            >
-              <div className="hero-overlay" />
-              <div className="hero-content">
-                <span className="hero-stamp">Featured</span>
-                <h3 className="hero-title">{featured?.title || "Dungeon Meshi"}</h3>
-                <div className="hero-tags">
-                  {(featured?.genres.slice(0, 3) || ["Fantasy", "Adventure", "Seinen"]).map((tag) => (
-                    <span className="tag" key={tag}>
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-                <button
-                  className="hero-btn"
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (featured) onAdd(featured);
-                  }}
-                >
-                  + Add to Library
+      {/* ── Active Filters Summary Bar ── */}
+      {isSearchMode && (
+        <div className="explore-summary-bar">
+          <div className="explore-summary-left">
+            <span className="explore-results-badge">
+              {loadingSearch
+                ? "Searching catalog..."
+                : `Found ${totalResults !== null ? totalResults : results.length} matching ${activeType} titles`}
+            </span>
+            {debouncedQuery.trim() && (
+              <span className="active-filter-tag">
+                Query: &ldquo;{debouncedQuery}&rdquo;
+                <button type="button" className="active-filter-remove" onClick={() => setQuery("")}>
+                  ✕
                 </button>
-              </div>
-            </div>
-            <div className="hero-side">
-              {(heroSide.length ? heroSide : []).map((item) => (
-                <div
-                  className="hero-mini"
-                  key={item.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onDetail(item)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onDetail(item);
-                    }
-                  }}
+              </span>
+            )}
+            {activeSort !== "trending" && (
+              <span className="active-filter-tag">
+                Sort: {SORT_OPTIONS.find((s) => s.value === activeSort)?.label}
+                <button type="button" className="active-filter-remove" onClick={() => setActiveSort("trending")}>
+                  ✕
+                </button>
+              </span>
+            )}
+            {activeFormat && (
+              <span className="active-filter-tag">
+                Format: {formatOptions.find((f) => f.value === activeFormat)?.label}
+                <button type="button" className="active-filter-remove" onClick={() => setActiveFormat("")}>
+                  ✕
+                </button>
+              </span>
+            )}
+            {activeStatus && (
+              <span className="active-filter-tag">
+                Status: {STATUS_FILTERS.find((s) => s.value === activeStatus)?.label}
+                <button type="button" className="active-filter-remove" onClick={() => setActiveStatus("")}>
+                  ✕
+                </button>
+              </span>
+            )}
+            {activeSeason && (
+              <span className="active-filter-tag">
+                Season: {activeSeason}
+                <button type="button" className="active-filter-remove" onClick={() => setActiveSeason("")}>
+                  ✕
+                </button>
+              </span>
+            )}
+            {activeGenres.map((g) => (
+              <span className="active-filter-tag" key={g}>
+                Genre: {g}
+                <button
+                  type="button"
+                  className="active-filter-remove"
+                  onClick={() => setActiveGenres((prev) => prev.filter((item) => item !== g))}
                 >
-                  <img src={item.cover} alt={item.title} />
-                  <div className="hero-mini-content">
-                    <div className="hero-mini-title">{item.title}</div>
-                    <div className="hero-mini-tags">
-                      <span className="tag">{item.genres[0] || "Feature"}</span>
-                    </div>
-                    <button
-                      className="hero-mini-btn"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onAdd(item);
-                      }}
-                    >
-                      + Add
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {loadingTop && heroSide.length === 0 ? (
-                <div className="empty-state">Loading seasonal picks…</div>
-              ) : null}
-            </div>
+                  ✕
+                </button>
+              </span>
+            ))}
           </div>
 
-          <section className="strip">
-            <div className="strip-header">
-              <span className="section-title">Top Rated This Season</span>
-              <button className="strip-link" type="button">
-                View All →
-              </button>
-            </div>
-            <div className="strip-cards">
-              {seasonalList.slice(0, 8).map((item) => (
-                <div
-                  className="strip-card"
-                  key={item.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onDetail(item)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onDetail(item);
-                    }
-                  }}
-                >
-                  <div className="strip-card-title">{item.title}</div>
-                  <div className="strip-card-tag">{item.genres[0] || "Season"}</div>
-                </div>
-              ))}
-              {loadingTop && seasonal.length === 0 ? <div className="strip-card">Loading…</div> : null}
-            </div>
-          </section>
+          {countActiveFilters > 0 && (
+            <button type="button" className="clear-all-btn" onClick={handleResetFilters}>
+              Reset Filters ✕
+            </button>
+          )}
+        </div>
+      )}
 
-          <section className="strip">
-            <div className="strip-header">
-              <span className="section-title">All-Time Classics</span>
-              <button className="strip-link" type="button">
-                View All →
+      {/* ── Main Viewport Content ── */}
+      {!isSearchMode ? (
+        <>
+          {/* 1. Custom Interactive Full-Width Hero Slider */}
+          {loadingTop && !spotlights.length ? (
+            <div className="skeleton-card" style={{ height: "320px", marginBottom: "24px" }} />
+          ) : topError && !spotlights.length ? (
+            <div className="empty-state">
+              <div className="empty-title">Catalog Temporarily Offline</div>
+              <div className="empty-sub">Unable to connect to discovery upstream. Click to reload.</div>
+              <button className="empty-action" type="button" onClick={loadDiscovery}>
+                Retry Loading
               </button>
             </div>
-            <div className="strip-cards">
-              {topAnime.slice(0, 8).map((item) => (
-                <div
-                  className="strip-card"
-                  key={item.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onDetail(item)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onDetail(item);
-                    }
-                  }}
-                >
-                  <div className="strip-card-title">{item.title}</div>
-                  <div className="strip-card-tag">Top Anime</div>
-                </div>
-              ))}
-              {loadingTop && topAnime.length === 0 ? <div className="strip-card">Loading…</div> : null}
-            </div>
-          </section>
+          ) : (
+            <CustomHeroSlider
+              spotlights={spotlights}
+              onAdd={onAdd}
+              onDetail={onDetail}
+            />
+          )}
 
-          <section className="strip">
-            <div className="strip-header">
-              <span className="section-title">Manga Essentials</span>
-              <button className="strip-link" type="button">
-                View All →
-              </button>
-            </div>
-            <div className="strip-cards">
-              {topManga.slice(0, 8).map((item) => (
-                <div
-                  className="strip-card"
-                  key={item.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onDetail(item)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onDetail(item);
-                    }
-                  }}
-                >
-                  <div className="strip-card-title">{item.title}</div>
-                  <div className="strip-card-tag">Top Manga</div>
-                </div>
-              ))}
-              {loadingTop && topManga.length === 0 ? <div className="strip-card">Loading…</div> : null}
-            </div>
-          </section>
+          {/* 2. Structured Multi-Row & Multi-Column Categorized Sections */}
+          {isAnime ? (
+            <>
+              {/* Category 01: Top Airing Releases */}
+              <ExploreCategorySection
+                title="Current Airing Broadcasts"
+                items={seasonal}
+                entryMap={entryMap}
+                onAdd={onAdd}
+                onDetail={onDetail}
+              />
+
+              {/* Category 02: All-Time Masterpieces */}
+              <ExploreCategorySection
+                title="All-Time Titans & Masterpieces"
+                items={topAnime}
+                entryMap={entryMap}
+                onAdd={onAdd}
+                onDetail={onDetail}
+              />
+
+              {/* Category 03: Feature Films & Specials */}
+              <ExploreCategorySection
+                title="Feature Films & Cinematic Specials"
+                items={topMovies}
+                entryMap={entryMap}
+                onAdd={onAdd}
+                onDetail={onDetail}
+              />
+
+              {/* Category 04: High-Octane Action & Shonen */}
+              <ExploreCategorySection
+                title="High-Octane Action & Shonen"
+                items={actionAnime}
+                entryMap={entryMap}
+                onAdd={onAdd}
+                onDetail={onDetail}
+              />
+
+              {/* Category 05: Psychological & Dark Seinen */}
+              <ExploreCategorySection
+                title="Psychological & Dark Seinen"
+                items={psychAnime}
+                entryMap={entryMap}
+                onAdd={onAdd}
+                onDetail={onDetail}
+              />
+            </>
+          ) : (
+            <>
+              {/* Category 01: Top-Tier Manga Classics */}
+              <ExploreCategorySection
+                title="Top-Tier Manga Masterpieces"
+                items={topManga}
+                entryMap={entryMap}
+                onAdd={onAdd}
+                onDetail={onDetail}
+              />
+
+              {/* Category 02: Light Novels & Web Serials */}
+              <ExploreCategorySection
+                title="Light Novels & Web Serials"
+                items={topNovels}
+                entryMap={entryMap}
+                onAdd={onAdd}
+                onDetail={onDetail}
+              />
+
+              {/* Category 03: Action & Dark Fantasy Manga */}
+              <ExploreCategorySection
+                title="Action & Dark Fantasy Manga"
+                items={actionManga}
+                entryMap={entryMap}
+                onAdd={onAdd}
+                onDetail={onDetail}
+              />
+
+              {/* Category 04: Romance & Character-Driven Manga */}
+              <ExploreCategorySection
+                title="Romance & Character-Driven Manga"
+                items={romanceManga}
+                entryMap={entryMap}
+                onAdd={onAdd}
+                onDetail={onDetail}
+              />
+            </>
+          )}
         </>
       ) : (
         <>
-          <div className="section-header">
-            <span className="section-title">Search Results</span>
+          {/* ── Search Results Grid ── */}
+          <div className="explore-category-header" style={{ marginBottom: "16px" }}>
+            <div className="explore-category-title-wrap">
+              <h3 className="section-title" style={{ margin: 0 }}>Search Results</h3>
+              <span className="explore-category-count">
+                ({totalResults !== null ? totalResults : results.length} titles found)
+              </span>
+            </div>
           </div>
-          {searchLoading ? (
-            <div className="grid results-grid">
-              {Array.from({ length: 8 }).map((_, index) => (
+
+          {loadingSearch ? (
+            <div className="explore-grid">
+              {Array.from({ length: 10 }).map((_, index) => (
                 <div className="skeleton-card" key={`skeleton-${index}`}>
-                  <div className="skeleton skeleton-img" />
+                  <div className="skeleton skeleton-img" style={{ aspectRatio: "3 / 4.2" }} />
                   <div className="skeleton-body">
                     <div className="skeleton skeleton-line" />
                     <div className="skeleton skeleton-line short" />
@@ -1159,75 +1872,52 @@ function ExploreView({
                 </div>
               ))}
             </div>
-          ) : searchResults.length === 0 ? (
-            <div className="empty-state">No results yet. Try a new title.</div>
-          ) : (
-            <div className="grid results-grid">
-              {searchResults.map((item) => {
-                const inLibrary = entryMap.has(mediaKey(item));
-                const isAnime = item.type === "anime";
-                return (
-                  <article className="card" key={mediaKey(item)}>
-                    <div
-                      className="card-img-wrap"
-                      role={isAnime ? "button" : undefined}
-                      tabIndex={isAnime ? 0 : undefined}
-                      onClick={() => {
-                        if (isAnime) onDetail(item);
-                      }}
-                      onKeyDown={(event) => {
-                        if (!isAnime) return;
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          onDetail(item);
-                        }
-                      }}
-                    >
-                      <img className="card-img" src={item.cover} alt={item.title} />
-                      <div className="card-img-overlay" />
-                      <div className="card-actions">
-                        <button
-                          className={`card-action-btn ${isAnime ? "primary" : inLibrary ? "in-library" : "primary"}`}
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            if (isAnime) {
-                              onDetail(item);
-                            } else if (inLibrary) {
-                              onDetail(item);
-                            } else {
-                              onAdd(item);
-                            }
-                          }}
-                        >
-                          {isAnime ? "View Info" : inLibrary ? "In Library ✓" : "+ Add to Library"}
-                        </button>
-                      </div>
-                      <div className={`score-badge ${item.official_score >= 9 ? "gold" : ""}`}>
-                        {formatScore(item.official_score)}
-                      </div>
-                    </div>
-                    <div className="card-info">
-                      <Link
-                        className="card-title"
-                        href={isAnime ? `/anime/${item.id}/info` : `/manga/${item.id}/info`}
-                      >
-                        {item.title}
-                      </Link>
-                      <div className="card-meta">
-                        <span>{item.year || "--"}</span> • {item.format}
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
+          ) : results.length === 0 ? (
+            <div className="empty-state empty-state-large">
+              <div className="empty-title">No Matching Titles Found</div>
+              <div className="empty-sub">
+                No {activeType} records matched your keywords and filters. Try adjusting your search query.
+              </div>
+              <button className="empty-action" type="button" onClick={handleResetFilters}>
+                Clear Search &amp; Filters
+              </button>
             </div>
+          ) : (
+            <>
+              <div className="explore-grid">
+                {results.map((item, idx) => (
+                  <ExploreMediaCard
+                    key={mediaKey(item)}
+                    media={item}
+                    entryMap={entryMap}
+                    onAdd={onAdd}
+                    onDetail={onDetail}
+                    index={idx}
+                  />
+                ))}
+              </div>
+
+              {hasNextPage && (
+                <div className="load-more-container">
+                  <button
+                    type="button"
+                    className="load-more-btn"
+                    onClick={handleLoadMore}
+                    disabled={loadingMore}
+                  >
+                    {loadingMore ? "Loading More..." : "Load Next Page ▾"}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
-    </>
+    </div>
   );
 }
+
+// ─── 3. My List View ───
 
 function MyListView({
   entries,
@@ -1245,7 +1935,7 @@ function MyListView({
   const [activeTab, setActiveTab] = useState("All");
   const [editingScore, setEditingScore] = useState<string | null>(null);
   const [editingProgress, setEditingProgress] = useState<string | null>(null);
-  const tabs = ["All", "Watching", "Completed", "On Hold", "Dropped", "Plan to Watch"];
+  const tabs = ["All", "Watching / Reading", "Completed", "On Hold", "Dropped", "Plan to Watch / Read"];
 
   const filteredEntries = useMemo(() => {
     if (activeTab === "All") return entries;
@@ -1263,11 +1953,6 @@ function MyListView({
     });
     return counts;
   }, [entries]);
-
-  const maxScoreCount = useMemo(
-    () => Math.max(1, ...scoreDistribution.map((item) => item.value)),
-    [scoreDistribution]
-  );
 
   const genreData = useMemo(() => {
     const map = new Map<string, number>();
@@ -1319,28 +2004,62 @@ function MyListView({
           <span className="stat-value">{String(entries.filter((entry) => entry.status === "completed").length).padStart(2, "0")}</span>
         </div>
         <div className="stat-pill">
-          <span className="stat-label">Currently Watching</span>
+          <span className="stat-label">Active</span>
           <span className="stat-value">{String(entries.filter((entry) => entry.status === "watching").length).padStart(2, "0")}</span>
         </div>
         <div className="stat-pill">
-          <span className="stat-label">Mean Score</span>
-          <span className="stat-value">
-            {entries.length
-              ? (
-                  entries.reduce((sum, entry) => sum + (entry.user_score ?? 0), 0) /
-                  Math.max(1, entries.filter((entry) => entry.user_score != null).length)
-                ).toFixed(1)
-              : "--"}
-          </span>
+          <span className="stat-label">On Hold</span>
+          <span className="stat-value">{String(entries.filter((entry) => entry.status === "on_hold").length).padStart(2, "0")}</span>
         </div>
       </div>
 
-      <div className="status-tabs">
+      <div className="chart-row">
+        <div className="chart-card">
+          <div className="chart-header">
+            <span className="chart-title">Score Distribution</span>
+          </div>
+          <div className="bar-chart">
+            {scoreDistribution.map((item) => {
+              const maxScoreCount = Math.max(1, ...scoreDistribution.map((s) => s.value));
+              const height = (item.value / maxScoreCount) * 100;
+              return (
+                <div className="bar-col" key={item.score}>
+                  <div className="bar" style={{ height: `${Math.max(4, height)}%` }} />
+                  <span className="bar-label">{item.score}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="chart-card">
+          <div className="chart-header">
+            <span className="chart-title">Genre Breakdown</span>
+          </div>
+          <div className="donut-wrap">
+            <div className="donut" style={{ background: `conic-gradient(${donutStops})` }} />
+            <div className="donut-legend">
+              {genreData.map((item, index) => {
+                const colors = ["#E8194B", "#3DB89C", "#C4A84F", "#4A4A5A", "#5B5BFF", "#C47B3D"];
+                return (
+                  <div className="legend-item" key={item.label}>
+                    <span className="legend-dot" style={{ background: colors[index % colors.length] }} />
+                    <span className="legend-label">{item.label}</span>
+                    <span className="legend-value">{item.value}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="list-tabs">
         {tabs.map((tab) => (
           <button
             key={tab}
+            className={`list-tab ${activeTab === tab ? "active" : ""}`}
             type="button"
-            className={`status-tab ${activeTab === tab ? "active" : ""}`}
             onClick={() => setActiveTab(tab)}
           >
             {tab}
@@ -1348,31 +2067,38 @@ function MyListView({
         ))}
       </div>
 
-      {entries.length === 0 ? (
-        <div className="empty-state">No entries yet. Add titles from Explore.</div>
-      ) : (
-        <div className="list-table">
-          <div className="list-row table-header">
-            <span>#</span>
-            <span>Cover</span>
-            <span>Title</span>
-            <span>Type</span>
-            <span>My Score</span>
-            <span>Official</span>
-            <span>Status</span>
-            <span>Progress</span>
-            <span>Date Added</span>
-            <span>⋯</span>
-          </div>
-          {filteredEntries.map((entry, index) => (
+      <div className="library-table">
+        <div className="library-row table-header">
+          <span>#</span>
+          <span>Cover</span>
+          <span>Title</span>
+          <span>Type</span>
+          <span>Score (Click to Edit)</span>
+          <span>Official</span>
+          <span>Status (Click to Edit)</span>
+          <span>Progress</span>
+          <span>Date</span>
+          <span>⋯</span>
+        </div>
+
+        {filteredEntries.map((entry, index) => {
+          const category = entryCategory(entry.type, entry.format);
+          return (
             <div
-              className={`list-row ${index % 2 === 0 ? "row-alt" : ""} ${entry.status === "watching" ? "row-watching" : ""}`}
               key={entryKey(entry)}
+              className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${entry.status === "watching" ? "row-watching" : ""}`}
             >
               <span className="mono">{String(index + 1).padStart(2, "0")}</span>
-              <img className="row-cover" src={entry.cover} alt={entry.title} />
-              <span className="title-cell">{entry.title}</span>
-              <span className="mono">{entry.format}</span>
+              <Link href={entry.type === "anime" ? `/anime/${entry.id}` : `/manga/${entry.id}`}>
+                <img className="row-cover" src={entry.cover} alt={entry.title} />
+              </Link>
+              <Link
+                className="title-cell"
+                href={entry.type === "anime" ? `/anime/${entry.id}/info` : `/manga/${entry.id}/info`}
+              >
+                {entry.title}
+              </Link>
+              <span className={`type-chip ${category.className}`}>{category.label}</span>
               <ScoreCell
                 entry={entry}
                 editingKey={editingScore}
@@ -1397,49 +2123,14 @@ function MyListView({
                 onToggleFavourite={onToggleFavourite}
               />
             </div>
-          ))}
-        </div>
-      )}
-
-      <div className="chart-grid">
-        <div className="chart-panel">
-          <div className="chart-title">Score Distribution</div>
-          <div className="score-chart">
-            {scoreDistribution.map((item) => (
-              <div className="bar-row" key={item.score}>
-                <span className="bar-label">{item.score}</span>
-                <div className="bar-track">
-                  <div className="bar-fill" style={{ width: `${(item.value / maxScoreCount) * 100}%` }} />
-                </div>
-                <span className="bar-count">{item.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="chart-panel donut-panel">
-          <div className="chart-title">Genre Breakdown</div>
-          <div className="donut-wrap">
-            <div className="donut" style={{ background: `conic-gradient(${donutStops})` }}>
-              {genreData.length === 0 ? <span className="donut-label">No Data</span> : null}
-            </div>
-            <div className="donut-legend">
-              {genreData.length === 0 ? (
-                <span className="legend-label">No genre data yet.</span>
-              ) : (
-                genreData.map((item, index) => (
-                  <div className="legend-row" key={item.label}>
-                    <span className="legend-dot" style={{ background: ["#E8194B", "#3DB89C", "#C4A84F", "#4A4A5A", "#5B5BFF", "#C47B3D"][index % 6] }} />
-                    <span className="legend-label">{item.label}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
+          );
+        })}
       </div>
     </>
   );
 }
+
+// ─── 4. Profile & Data Management View ───
 
 function ProfileView({
   profileStats,
@@ -1462,16 +2153,16 @@ function ProfileView({
           <span className="page-title-slash">/</span>
           <span className="page-title">PROFILE</span>
         </div>
-        <div className="page-sub">Stats, exports, and vault controls</div>
+        <div className="page-sub">Analytics, backups, and vault controls</div>
       </div>
 
       <div className="profile-grid">
         <div className="profile-card">
           <div className="profile-header">
-            <div className="profile-avatar">YK</div>
+            <div className="profile-avatar">ŌK</div>
             <div>
-              <div className="profile-name">Yuki K.</div>
-              <div className="profile-join">Joined • 2023-04-09</div>
+              <div className="profile-name">Okami Master</div>
+              <div className="profile-join">Tracking Vault • Active</div>
             </div>
           </div>
           <div className="profile-stats">
@@ -1487,30 +2178,33 @@ function ProfileView({
           </div>
           <div className="favourite-row">
             {favourites.length === 0 ? (
-              <div className="empty-inline">No favourites yet. Mark entries in My List.</div>
+              <div className="empty-inline">No favourites marked yet. Star titles from Library or My List.</div>
             ) : (
-              favourites.slice(0, 5).map((entry) => (
+              favourites.slice(0, 6).map((entry) => (
                 <div className="favourite-card" key={entryKey(entry)}>
-                  <img className="favourite-cover" src={entry.cover} alt={entry.title} />
+                  <Link href={entry.type === "anime" ? `/anime/${entry.id}` : `/manga/${entry.id}`}>
+                    <img className="favourite-cover" src={entry.cover} alt={entry.title} />
+                  </Link>
                   <span className="favourite-title">{entry.title}</span>
                 </div>
               ))
             )}
           </div>
         </div>
+
         <div className="profile-card settings-card">
           <div className="section-header">
-            <span className="section-title">Settings</span>
+            <span className="section-title">Vault Data Management</span>
           </div>
           <div className="settings-list">
             <button className="settings-btn" type="button" onClick={onExport}>
-              Export data (JSON)
+              📥 Export Vault Backup (JSON)
             </button>
             <button className="settings-btn" type="button" onClick={onImport}>
-              Import data (JSON)
+              📤 Import Vault Backup (JSON)
             </button>
             <button className="settings-btn danger" type="button" onClick={onClear}>
-              Clear all data
+              ⚠️ Clear All Vault Data
             </button>
           </div>
         </div>
@@ -1518,6 +2212,8 @@ function ProfileView({
     </>
   );
 }
+
+// ─── Modal Dialogs ───
 
 function AddEntryModal({
   state,
@@ -1539,205 +2235,106 @@ function AddEntryModal({
   const [status, setStatus] = useState<OkamiStatus>(() => entry?.status ?? "plan_to_watch");
   const [userScore, setUserScore] = useState<number | null>(() => entry?.user_score ?? null);
   const [notes, setNotes] = useState(() => entry?.notes ?? "");
-  const [seasonCount, setSeasonCount] = useState<number | null>(null);
-  const [volumeCount, setVolumeCount] = useState<number | null>(null);
-  const [selectedSeasons, setSelectedSeasons] = useState<number[]>(() => entry?.completed_seasons ?? []);
-  const [selectedVolumes, setSelectedVolumes] = useState<number[]>(() => entry?.completed_volumes ?? []);
-  const [countsLoading, setCountsLoading] = useState(Boolean(media));
-
-  const toggleSelection = (current: number[], value: number) => {
-    if (current.includes(value)) {
-      return current.filter((item) => item !== value);
-    }
-    return [...current, value].sort((a, b) => a - b);
-  };
-
-  useEffect(() => {
-    if (!media) return;
-
-    let active = true;
-
-    const loadCounts = async () => {
-      try {
-        const detail = await fetchDetail(media.type, media.id);
-        if (!active) return;
-        if (media.type === "manga") {
-          const count = detail.volumes ?? null;
-          const safeCount = count && count > 0 ? count : null;
-          setVolumeCount(safeCount);
-          if (safeCount) {
-            setSelectedVolumes((current) => current.filter((value) => value <= safeCount));
-          }
-        } else {
-          const related = await fetchRelated("anime", media.id);
-          if (!active) return;
-          const sequelCount = related
-            .filter((relation) => (relation.relation ?? "").toLowerCase() === "sequel")
-            .reduce(
-              (sum, relation) =>
-                sum + (relation.entry?.filter((item) => (item.type ?? "").toLowerCase() === "anime").length ?? 0),
-              0
-            );
-          const episodes = detail.episodes ?? detail.total ?? 0;
-          const estimated = episodes ? Math.max(1, Math.ceil(episodes / 12)) : 1;
-          const count = Math.max(estimated, sequelCount + 1);
-          setSeasonCount(count);
-          setSelectedSeasons((current) => current.filter((value) => value <= count));
-        }
-      } catch {
-        if (!active) return;
-        setSeasonCount(null);
-        setVolumeCount(null);
-      } finally {
-        if (active) setCountsLoading(false);
-      }
-    };
-
-    loadCounts();
-
-    return () => {
-      active = false;
-    };
-  }, [media]);
 
   if (!media) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-box" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <img className="modal-cover" src={media.cover} alt={media.title} />
+          <span className="modal-title">
+            {entry ? "Update Entry" : "Add to Library"} — {media.title}
+          </span>
+          <button className="modal-close" type="button" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+
+        <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
+          <img src={media.cover} alt={media.title} style={{ width: 80, height: 110, objectFit: "cover", borderRadius: 4 }} />
           <div>
-            <div className="modal-title">{media.title}</div>
-            <div className="modal-meta">
-              <span>{media.year || "--"}</span> • {media.format}
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{media.title}</div>
+            <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+              {media.year} • {media.format} • {media.total ? `${media.total} ${media.type === "manga" ? "chapters" : "episodes"}` : "Ongoing"}
             </div>
-            <div className="modal-tags">
-              {media.genres.slice(0, 4).map((tag) => (
-                <span className="tag" key={tag}>
-                  {tag}
-                </span>
-              ))}
+            <div style={{ fontSize: 12, color: "var(--gold)", marginTop: 4 }}>
+              MAL Score: {formatScore(media.official_score)}
             </div>
           </div>
         </div>
 
-        <div className="modal-fields">
-          <label className="field">
-            <span className="field-label">Status</span>
-            <select value={status} onChange={(event) => setStatus(event.target.value as OkamiStatus)}>
-              {statusOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label className="info-label" style={{ display: "block", marginBottom: 6 }}>
+              Status
+            </label>
+            <div className="status-button-row">
+              {statusOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`status-button status-${opt.className} ${status === opt.value ? "active" : ""}`}
+                  onClick={() => setStatus(opt.value)}
+                >
+                  {opt.label}
+                </button>
               ))}
-            </select>
-          </label>
-          {media.type === "anime" ? (
-            <div className="field">
-              <span className="field-label">Seasons Completed</span>
-              {countsLoading ? (
-                <span className="field-help">Loading season count…</span>
-              ) : seasonCount ? (
-                <>
-                  <div className="tile-grid">
-                    {Array.from({ length: seasonCount }, (_, index) => {
-                      const value = index + 1;
-                      const active = selectedSeasons.includes(value);
-                      return (
-                        <button
-                          key={`season-${value}`}
-                          type="button"
-                          className={`tile ${active ? "active" : ""}`}
-                          aria-pressed={active}
-                          onClick={() => setSelectedSeasons((current) => toggleSelection(current, value))}
-                        >
-                          S{String(value).padStart(2, "0")}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <span className="field-help">
-                    {selectedSeasons.length} / {seasonCount} seasons marked complete.
-                  </span>
-                </>
-              ) : (
-                <span className="field-help">Season count unavailable.</span>
-              )}
             </div>
-          ) : null}
-          {media.type === "manga" ? (
-            <div className="field">
-              <span className="field-label">Volumes Completed</span>
-              {countsLoading ? (
-                <span className="field-help">Loading volume count…</span>
-              ) : volumeCount ? (
-                <>
-                  <div className="tile-grid">
-                    {Array.from({ length: volumeCount }, (_, index) => {
-                      const value = index + 1;
-                      const active = selectedVolumes.includes(value);
-                      return (
-                        <button
-                          key={`volume-${value}`}
-                          type="button"
-                          className={`tile ${active ? "active" : ""}`}
-                          aria-pressed={active}
-                          onClick={() => setSelectedVolumes((current) => toggleSelection(current, value))}
-                        >
-                          V{String(value).padStart(2, "0")}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <span className="field-help">
-                    {selectedVolumes.length} / {volumeCount} volumes marked complete.
-                  </span>
-                </>
-              ) : (
-                <span className="field-help">Volume count unavailable.</span>
-              )}
-            </div>
-          ) : null}
-          <label className="field">
-            <span className="field-label">My Score</span>
-            <select
-              value={userScore ?? ""}
-              onChange={(event) => setUserScore(event.target.value ? Number(event.target.value) : null)}
-            >
-              <option value="">--</option>
-              {Array.from({ length: 10 }, (_, index) => 10 - index).map((score) => (
-                <option key={score} value={score}>
-                  {score}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field field-notes">
-            <span className="field-label">Notes</span>
-            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} />
-          </label>
-        </div>
+          </div>
 
-        <div className="modal-actions">
-          <button className="modal-btn ghost" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="modal-btn primary"
-            type="button"
-            onClick={() =>
-              onSave({
-                status,
-                userScore,
-                notes,
-                completedSeasons: selectedSeasons,
-                completedVolumes: selectedVolumes,
-              })
-            }
-          >
-            {entry ? "Update Entry" : "Add to Library"}
-          </button>
+          <div>
+            <label className="info-label" style={{ display: "block", marginBottom: 6 }}>
+              Personal Score (1–10)
+            </label>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
+                <button
+                  key={num}
+                  type="button"
+                  className={`pill ${userScore === num ? "active" : ""}`}
+                  style={{ minWidth: 32, textAlign: "center" }}
+                  onClick={() => setUserScore(userScore === num ? null : num)}
+                >
+                  ★ {num}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="info-label" style={{ display: "block", marginBottom: 6 }}>
+              Private Notes
+            </label>
+            <textarea
+              className="search-input"
+              rows={3}
+              style={{ width: "100%", resize: "vertical", fontSize: 12 }}
+              placeholder="Add impressions or reminders..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </div>
+
+          <div className="modal-actions" style={{ marginTop: 8 }}>
+            <button className="modal-btn ghost" type="button" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              className="modal-btn primary"
+              type="button"
+              onClick={() => {
+                onSave({
+                  status,
+                  userScore,
+                  notes,
+                  completedSeasons: entry?.completed_seasons || [],
+                  completedVolumes: entry?.completed_volumes || [],
+                });
+              }}
+            >
+              Save to Library
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1758,80 +2355,119 @@ function LogProgressModal({
   const [progress, setProgress] = useState("");
 
   const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return entries;
-    return entries.filter((entry) => entry.title.toLowerCase().includes(needle));
+    return entries.filter(
+      (e) =>
+        e.title.toLowerCase().includes(query.toLowerCase()) &&
+        (e.status === "watching" || e.status === "plan_to_watch")
+    );
   }, [entries, query]);
 
   const handleSelect = (entry: OkamiEntry) => {
     setSelected(entry);
-    setProgress(String(entry.progress));
+    setProgress(String(entry.progress + 1));
   };
 
   const handleSave = () => {
     if (!selected) return;
-    const value = Number(progress);
-    if (!Number.isFinite(value) || value < 0) return;
-    onCommit(updateEntry(entries, selected.id, selected.type, { progress: value }));
+    const val = Number(progress);
+    if (!Number.isFinite(val) || val < 0) return;
+
+    const maxTotal = selected.total && selected.total > 0 ? selected.total : Infinity;
+    const clamped = Math.min(val, maxTotal);
+    const isCompleted = selected.total && clamped >= selected.total;
+
+    onCommit(
+      updateEntry(entries, selected.id, selected.type, {
+        progress: clamped,
+        status: isCompleted ? "completed" : "watching",
+      })
+    );
     onClose();
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-title">Log Progress</div>
-        <div className="search-bar log-search">
-          <input
-            className="search-input"
-            placeholder="SEARCH YOUR LIBRARY..."
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <span className="modal-title">Log Reading / Watching Progress</span>
+          <button className="modal-close" type="button" onClick={onClose}>
+            ✕
+          </button>
         </div>
-        <div className="log-list">
+
+        <input
+          className="search-input"
+          style={{ width: "100%", marginBottom: 12 }}
+          placeholder="Filter your active titles..."
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          autoFocus
+        />
+
+        <div className="log-list custom-scroll" style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
           {filtered.length === 0 ? (
-            <div className="empty-state">No entries found.</div>
+            <div className="detail-empty">No active titles found.</div>
           ) : (
-            filtered.map((entry) => (
-              <button
-                className={`log-item ${selected?.id === entry.id && selected?.type === entry.type ? "active" : ""}`}
-                type="button"
-                key={entryKey(entry)}
-                onClick={() => handleSelect(entry)}
+            filtered.map((item) => (
+              <div
+                key={entryKey(item)}
+                onClick={() => handleSelect(item)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: 8,
+                  borderRadius: 4,
+                  background: selected?.id === item.id && selected.type === item.type ? "var(--surface-3)" : "var(--surface-2)",
+                  border: `1px solid ${selected?.id === item.id && selected.type === item.type ? "var(--accent)" : "var(--border)"}`,
+                  cursor: "pointer",
+                }}
               >
-                <img className="log-cover" src={entry.cover} alt={entry.title} />
-                <div>
-                  <div className="log-title">{entry.title}</div>
-                  <div className="log-meta">
-                    {entry.type === "manga" ? "Ch" : "Ep"} {entry.progress} / {entry.total ?? "--"}
+                <img src={item.cover} alt={item.title} style={{ width: 36, height: 48, objectFit: "cover", borderRadius: 2 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{item.title}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                    {item.type === "manga" ? "Ch." : "Ep."} {item.progress} / {item.total ?? "?"}
                   </div>
                 </div>
-              </button>
+              </div>
             ))
           )}
         </div>
-        {selected ? (
-          <div className="log-progress">
-            <span className="log-progress-label">
-              New {selected.type === "manga" ? "Chapter" : "Episode"}
-            </span>
-            <input
-              className="inline-input"
-              type="number"
-              min={0}
-              max={selected.total ?? 9999}
-              value={progress}
-              onChange={(event) => setProgress(event.target.value)}
-            />
-            <span className="log-progress-meta">/ {selected.total ?? "--"}</span>
+
+        {selected && (
+          <div style={{ marginTop: 16 }}>
+            <label className="info-label" style={{ display: "block", marginBottom: 6 }}>
+              New Progress ({selected.type === "manga" ? "Chapters" : "Episodes"})
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                className="inline-input"
+                type="number"
+                min={0}
+                max={selected.total ?? 99999}
+                value={progress}
+                onChange={(e) => setProgress(e.target.value)}
+                style={{ width: 100, fontSize: 14 }}
+              />
+              <span style={{ fontSize: 12, color: "var(--text-2)" }}>
+                / {selected.total ?? "ongoing"}
+              </span>
+            </div>
           </div>
-        ) : null}
-        <div className="modal-actions">
+        )}
+
+        <div className="modal-actions" style={{ marginTop: 20 }}>
           <button className="modal-btn ghost" type="button" onClick={onClose}>
             Cancel
           </button>
-          <button className="modal-btn primary" type="button" onClick={handleSave} disabled={!selected}>
-            Save
+          <button
+            className="modal-btn primary"
+            type="button"
+            onClick={handleSave}
+            disabled={!selected}
+          >
+            Save Progress
           </button>
         </div>
       </div>
@@ -1861,7 +2497,7 @@ function DetailPanel({
   type DetailTab = "overview" | "episodes" | "volumes" | "related";
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
   const [episodes, setEpisodes] = useState<JikanEpisode[]>([]);
-  const [volumes, setVolumes] = useState<unknown[]>([]);
+  const [volumes, setVolumes] = useState<MangaVolumeItem[]>([]);
   const [related, setRelated] = useState<JikanRelation[]>([]);
   const [tabLoading, setTabLoading] = useState(false);
 
@@ -1890,7 +2526,7 @@ function DetailPanel({
       setTabLoading(true);
       try {
         const data = await fetchEpisodes(media.id);
-        setEpisodes(data);
+        setEpisodes(data.episodes);
       } finally {
         setTabLoading(false);
       }
@@ -1900,7 +2536,7 @@ function DetailPanel({
       setTabLoading(true);
       try {
         const data = await fetchVolumes(media.id);
-        setVolumes(data);
+        setVolumes(data.volumes);
       } finally {
         setTabLoading(false);
       }
@@ -1952,10 +2588,14 @@ function DetailPanel({
             {inLibrary ? "Update Entry" : "Add to Library"}
           </button>
           {media.type === "anime" ? (
-            <Link className="modal-btn ghost" href={`/anime/${media.id}/info`}>
-              Open Info Page
+            <Link className="modal-btn ghost" href={`/anime/${media.id}`}>
+              Open Tracker →
             </Link>
-          ) : null}
+          ) : (
+            <Link className="modal-btn ghost" href={`/manga/${media.id}`}>
+              Open Tracker →
+            </Link>
+          )}
         </div>
         <div className="detail-tabs">
           <button
@@ -2006,8 +2646,8 @@ function DetailPanel({
               <div className="detail-empty">No episode data available.</div>
             ) : (
               <div className="detail-list">
-                {episodes.map((episode, index) => (
-                  <div className={`detail-list-row ${index % 2 === 0 ? "row-alt" : ""}`} key={episode.mal_id}>
+                {episodes.map((episode) => (
+                  <div className="detail-list-row" key={episode.mal_id}>
                     <span className="detail-list-id">EP.{String(episode.mal_id).padStart(2, "0")}</span>
                     <span className="detail-list-title">
                       {episode.title || episode.title_english || episode.title_japanese || `Episode ${episode.mal_id}`}
@@ -2028,17 +2668,14 @@ function DetailPanel({
               <div className="detail-empty">No volume data available.</div>
             ) : (
               <div className="detail-list">
-                {volumes.map((item, index) => {
-                  const name = (item as { name?: string; title?: string })?.name ||
-                    (item as { title?: string })?.title ||
-                    `Entry ${index + 1}`;
-                  return (
-                    <div className={`detail-list-row ${index % 2 === 0 ? "row-alt" : ""}`} key={`${name}-${index}`}>
-                      <span className="detail-list-id">VOL.{String(index + 1).padStart(2, "0")}</span>
-                      <span className="detail-list-title">{name}</span>
-                    </div>
-                  );
-                })}
+                {volumes.map((vol) => (
+                  <div className="detail-list-row" key={vol.volumeNumber}>
+                    <span className="detail-list-id">VOL.{String(vol.volumeNumber).padStart(2, "0")}</span>
+                    <span className="detail-list-title">
+                      {vol.title} {vol.estimatedChapters ? `(${vol.estimatedChapters})` : ""}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -2080,6 +2717,8 @@ function DetailPanel({
   );
 }
 
+// ─── Main Okami App Root Component ───
+
 export default function Home() {
   const router = useRouter();
   const [activeNav, setActiveNav] = useState("Library");
@@ -2087,8 +2726,9 @@ export default function Home() {
   const [activeView, setActiveView] = useState<"grid" | "list">("grid");
   const [activeType, setActiveType] = useState<"all" | "anime" | "manga" | "films">("all");
   const [activeGenre, setActiveGenre] = useState("");
-  const [activeStatus, setActiveStatus] = useState<OkamiStatus | "">("");
+  const [activeStatus, setActiveStatus] = useState<OkamiStatus | "favorites" | "">("");
   const [sortBy, setSortBy] = useState<(typeof sortOptions)[number]>("Date Added");
+
   const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
   const [franchises, setFranchises] = useState<Record<string, UnifiedFranchiseEntry>>(() => {
     migrateLegacyEntries();
@@ -2097,6 +2737,9 @@ export default function Home() {
 
   useEffect(() => {
     migrateLegacyEntries();
+    Promise.resolve().then(() => {
+      setFranchises(loadFranchiseEntries());
+    });
   }, []);
 
   const commitEntries = useCallback((next: OkamiEntry[]) => {
@@ -2110,66 +2753,99 @@ export default function Home() {
   }, []);
 
   const handleQuickIncrement = useCallback(
-    (entry: OkamiEntry) => {
-      const franchise = findFranchiseByMalId(franchises, entry.id);
-      const fId = franchise?.franchiseId ?? `franchise_${entry.id}`;
-
-      if (entry.type === "anime") {
-        const nextFranchises = incrementEpisode(franchises, fId, entry.id);
-        commitFranchises(nextFranchises);
-      } else {
-        const nextFranchises = incrementChapter(franchises, fId, entry.id);
-        commitFranchises(nextFranchises);
+    (item: UnifiedLibraryItem) => {
+      if (item.franchise) {
+        const fId = item.franchise.franchiseId;
+        if (item.type === "manga") {
+          const mangaId = item.activeMalId;
+          const nextFranchises = incrementChapter(franchises, fId, mangaId);
+          commitFranchises(nextFranchises);
+        } else {
+          const seasonId = item.activeMalId;
+          const nextFranchises = incrementEpisode(franchises, fId, seasonId);
+          commitFranchises(nextFranchises);
+        }
       }
 
-      const maxTotal = entry.total && entry.total > 0 ? entry.total : Infinity;
-      const nextProg = Math.min(entry.progress + 1, maxTotal);
-      const nextStat: OkamiStatus =
-        entry.total && nextProg >= entry.total ? "completed" : "watching";
-      commitEntries(
-        updateEntry(entries, entry.id, entry.type, {
-          progress: nextProg,
-          status: nextStat,
-        })
-      );
+      if (item.legacyEntry) {
+        const e = item.legacyEntry;
+        const maxTotal = e.total && e.total > 0 ? e.total : Infinity;
+        const nextProg = Math.min(e.progress + 1, maxTotal);
+        const nextStat: OkamiStatus = e.total && nextProg >= e.total ? "completed" : "watching";
+        commitEntries(
+          updateEntry(entries, e.id, e.type, {
+            progress: nextProg,
+            status: nextStat,
+          })
+        );
+      }
     },
-    [franchises, entries, commitEntries, commitFranchises]
+    [franchises, entries, commitFranchises, commitEntries]
   );
+
   const [modalState, setModalState] = useState<{ media: OkamiMedia; entry?: OkamiEntry } | null>(null);
   const [detailMedia, setDetailMedia] = useState<OkamiMedia | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [logProgressOpen, setLogProgressOpen] = useState(false);
 
-
-
   const entryMap = useMemo(() => new Map(entries.map((entry) => [entryKey(entry), entry])), [entries]);
 
+  // Real-time calculated profile statistics
   const profileStats = useMemo(() => {
-    const totalEntries = entries.length;
-    const episodesWatched = entries.filter((entry) => entry.type === "anime").reduce((sum, entry) => sum + entry.progress, 0);
-    const chaptersRead = entries.filter((entry) => entry.type === "manga").reduce((sum, entry) => sum + entry.progress, 0);
-    const daysConsumed = Math.round((episodesWatched * 24 + chaptersRead * 5) / 60 / 24) || 0;
-    const genreCount = new Map<string, number>();
-    entries.forEach((entry) => {
-      entry.genres.forEach((genre) => {
-        genreCount.set(genre, (genreCount.get(genre) ?? 0) + 1);
-      });
-    });
-    const favouriteGenre = Array.from(genreCount.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "--";
-    const scoredEntries = entries.filter((entry) => entry.user_score != null);
-    const meanScore = scoredEntries.length
-      ? (scoredEntries.reduce((sum, entry) => sum + (entry.user_score ?? 0), 0) / scoredEntries.length).toFixed(1)
+    const totalFranchises = Object.keys(franchises).length;
+    let episodesWatched = 0;
+    let chaptersRead = 0;
+    let volumesRead = 0;
+
+    for (const f of Object.values(franchises)) {
+      if (f.anime?.seasons) {
+        for (const s of Object.values(f.anime.seasons)) {
+          episodesWatched += s.episodesWatched || 0;
+        }
+      }
+      if (f.manga?.series) {
+        for (const m of Object.values(f.manga.series)) {
+          chaptersRead += m.chaptersRead || 0;
+          volumesRead += m.volumesRead || 0;
+        }
+      }
+    }
+
+    // Include any legacy entries
+    for (const e of entries) {
+      if (!findFranchiseByMalId(franchises, e.id)) {
+        if (e.type === "anime") episodesWatched += e.progress || 0;
+        else chaptersRead += e.progress || 0;
+      }
+    }
+
+    const totalTracked = Math.max(totalFranchises, entries.length);
+    const daysConsumed = ((episodesWatched * 24 + chaptersRead * 5) / (60 * 24)).toFixed(1);
+
+    const genreMap = new Map<string, number>();
+    for (const e of entries) {
+      e.genres?.forEach((g) => genreMap.set(g, (genreMap.get(g) || 0) + 1));
+    }
+    for (const f of Object.values(franchises)) {
+      f.genres?.forEach((g) => genreMap.set(g, (genreMap.get(g) || 0) + 1));
+    }
+    const favoriteGenre = Array.from(genreMap.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "--";
+
+    const scored = entries.filter((e) => typeof e.user_score === "number" && e.user_score > 0);
+    const meanScore = scored.length
+      ? (scored.reduce((sum, e) => sum + (e.user_score || 0), 0) / scored.length).toFixed(1)
       : "--";
 
     return [
-      { label: "Total Entries", value: String(totalEntries).padStart(3, "0") },
+      { label: "Franchises", value: String(totalTracked).padStart(3, "0") },
       { label: "Episodes Watched", value: String(episodesWatched) },
       { label: "Chapters Read", value: String(chaptersRead) },
-      { label: "Days Consumed", value: String(daysConsumed) },
-      { label: "Favourite Genre", value: favouriteGenre },
+      { label: "Volumes Read", value: String(volumesRead) },
+      { label: "Days Consumed", value: daysConsumed },
       { label: "Mean Score", value: meanScore },
+      { label: "Favorite Genre", value: favoriteGenre },
     ];
-  }, [entries]);
+  }, [franchises, entries]);
 
   const favourites = useMemo(() => entries.filter((entry) => entry.is_favourite), [entries]);
 
@@ -2217,6 +2893,33 @@ export default function Home() {
       ? updateEntry(entries, entry.id, entry.type, nextEntry)
       : addEntry(entries, nextEntry);
     commitEntries(nextEntries);
+
+    // Also sync to Unified Franchise
+    const franchiseId = `franchise_${media.id}`;
+    const existingFranchise = franchises[franchiseId];
+    if (existingFranchise) {
+      if (media.type === "anime" && existingFranchise.anime) {
+        const season = existingFranchise.anime.seasons[media.id];
+        if (season) {
+          const updatedFranchise: UnifiedFranchiseEntry = {
+            ...existingFranchise,
+            anime: {
+              ...existingFranchise.anime,
+              seasons: {
+                ...existingFranchise.anime.seasons,
+                [media.id]: {
+                  ...season,
+                  score: data.userScore ?? 0,
+                  notes: data.notes,
+                },
+              },
+            },
+          };
+          saveFranchiseEntries({ ...franchises, [franchiseId]: updatedFranchise });
+        }
+      }
+    }
+
     setModalState(null);
   };
 
@@ -2227,8 +2930,6 @@ export default function Home() {
   const handleToggleFavourite = (entry: OkamiEntry) => {
     commitEntries(toggleFavourite(entries, entry.id, entry.type));
   };
-
-
 
   const openDetailById = async (type: MediaType, id: number) => {
     setDetailLoading(true);
@@ -2259,16 +2960,16 @@ export default function Home() {
     }
   };
 
-  const openTracker = (entry: OkamiEntry) => {
-    if (entry.type === "anime") {
-      router.push(`/anime/${entry.id}`);
+  const openTracker = (item: UnifiedLibraryItem) => {
+    if (item.type === "manga") {
+      router.push(`/manga/${item.activeMalId}`);
     } else {
-      router.push(`/manga/${entry.id}`);
+      router.push(`/anime/${item.activeMalId}`);
     }
   };
 
   const handleExport = () => {
-    const json = exportAllData();
+    const json = exportLibraryAsJson();
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -2287,27 +2988,24 @@ export default function Home() {
       if (!file) return;
       const text = await file.text();
       try {
-        const { entries: importedEntries, franchises: importedFranchises } = importAllData(text);
-        const merged = [...entries];
-        importedEntries.forEach((incoming) => {
-          if (!merged.find((existing) => existing.id === incoming.id && existing.type === incoming.type)) {
-            merged.push(incoming);
-          }
-        });
-        commitEntries(merged);
-        const mergedFranchises = { ...franchises, ...importedFranchises };
-        commitFranchises(mergedFranchises);
-        alert(`Imported ${importedEntries.length} entries.`);
+        const success = importLibraryFromJson(text);
+        if (success) {
+          setEntries(loadEntries());
+          setFranchises(loadFranchiseEntries());
+          alert("Vault backup successfully imported.");
+        } else {
+          alert("Invalid backup file format.");
+        }
       } catch {
-        alert("Invalid file. Expected a valid Okami JSON backup.");
+        alert("Failed to parse JSON backup.");
       }
     };
     input.click();
   };
 
   const handleClear = () => {
-    if (confirm("This will permanently delete all your entries and franchise progress. Are you sure?")) {
-      if (confirm("Last chance — this cannot be undone.")) {
+    if (confirm("This will permanently delete all your tracked entries and franchise progress. Are you sure?")) {
+      if (confirm("Second confirmation: This action is permanent and cannot be undone.")) {
         commitEntries([]);
         commitFranchises({});
       }
@@ -2347,19 +3045,6 @@ export default function Home() {
           <button className="log-btn" type="button" onClick={() => setLogProgressOpen(true)}>
             + Log Progress
           </button>
-          <button className="sidebar-util" type="button">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14" />
-            </svg>
-            Settings
-          </button>
-          <button className="sidebar-util" type="button">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4m7 14l5-5-5-5m5 5H9" />
-            </svg>
-            Logout
-          </button>
         </div>
       </aside>
 
@@ -2370,27 +3055,34 @@ export default function Home() {
               key={tab}
               className={`topbar-tab ${activeTab === tab ? "active" : ""}`}
               type="button"
-              onClick={() => setActiveTab(tab)}
+              onClick={() => {
+                setActiveTab(tab);
+                setActiveType(tab.toLowerCase() as "all" | "anime" | "manga" | "films");
+              }}
               aria-pressed={activeTab === tab}
             >
               {tab}
             </button>
           ))}
           <div className="topbar-right">
-            <button className="topbar-icon" type="button" aria-label="Search">
+            <button
+              className="topbar-icon"
+              type="button"
+              aria-label="Search"
+              onClick={() => setActiveNav("Explore")}
+            >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="11" cy="11" r="8" />
                 <path d="m21 21-4.35-4.35" />
               </svg>
             </button>
-            <button className="topbar-icon" type="button" aria-label="Notifications">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 01-3.46 0" />
-              </svg>
-            </button>
-            <button className="avatar" type="button" aria-label="Profile">
-              YK
+            <button
+              className="avatar"
+              type="button"
+              aria-label="Profile"
+              onClick={() => setActiveNav("Profile")}
+            >
+              ŌK
             </button>
           </div>
         </div>

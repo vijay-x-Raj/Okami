@@ -1,6 +1,9 @@
+"use client";
+
+import { useEffect, useState, useCallback } from "react";
 import type { MediaType } from "./jikan";
 
-// ─── Legacy Types (backward compatible) ───
+// ─── Legacy Types (preserved for backward compatibility) ───
 
 export type OkamiStatus = "watching" | "completed" | "on_hold" | "dropped" | "plan_to_watch";
 
@@ -25,73 +28,7 @@ export type OkamiEntry = {
   is_favourite: boolean;
 };
 
-const STORAGE_KEY = "okami_entries";
-
-// ─── Legacy Helpers (preserved for backward compatibility) ───
-
-export function loadEntries(): OkamiEntry[] {
-  return readEntries();
-}
-
-export function readEntries(): OkamiEntry[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as OkamiEntry[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveEntries(entries: OkamiEntry[]): void {
-  writeEntries(entries);
-}
-
-export function writeEntries(entries: OkamiEntry[]): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-}
-
-export function addEntry(entries: OkamiEntry[], entry: OkamiEntry): OkamiEntry[] {
-  const exists = entries.some((existing) => existing.id === entry.id && existing.type === entry.type);
-  if (exists) return entries;
-  return [...entries, { ...entry, date_added: new Date().toISOString() }];
-}
-
-export function upsertEntry(entries: OkamiEntry[], entry: OkamiEntry): OkamiEntry[] {
-  const index = entries.findIndex((existing) => existing.id === entry.id && existing.type === entry.type);
-  if (index === -1) return [entry, ...entries];
-  const next = [...entries];
-  next[index] = entry;
-  return next;
-}
-
-export function updateEntry(
-  entries: OkamiEntry[],
-  id: number,
-  type: MediaType,
-  patch: Partial<OkamiEntry>
-): OkamiEntry[] {
-  return entries.map((entry) =>
-    entry.id === id && entry.type === type ? { ...entry, ...patch } : entry
-  );
-}
-
-export function removeEntry(entries: OkamiEntry[], id: number, type: MediaType): OkamiEntry[] {
-  return entries.filter((entry) => !(entry.id === id && entry.type === type));
-}
-
-export function toggleFavourite(entries: OkamiEntry[], id: number, type: MediaType): OkamiEntry[] {
-  return entries.map((entry) =>
-    entry.id === id && entry.type === type
-      ? { ...entry, is_favourite: !entry.is_favourite }
-      : entry
-  );
-}
-
-// ─── Unified Franchise Types ───
+// ─── Unified Franchise Types (v2) ───
 
 export type WatchStatus = "WATCHING" | "COMPLETED" | "ON_HOLD" | "DROPPED" | "PLAN_TO_WATCH";
 export type ReadStatus = "READING" | "COMPLETED" | "ON_HOLD" | "DROPPED" | "PLAN_TO_READ";
@@ -99,241 +36,78 @@ export type ReadStatus = "READING" | "COMPLETED" | "ON_HOLD" | "DROPPED" | "PLAN
 export interface SeasonProgress {
   malId: number;
   title: string;
-  type: "TV" | "Movie" | "OVA" | "Special" | "ONA";
-  seasonNumber: number;
+  titleEnglish?: string | null;
+  coverImage: string;
+  type: "TV" | "Movie" | "OVA" | "Special" | "ONA" | string;
+  seasonNumber: number; // 1, 2, 3... for mainline; 0 for Movies/OVAs
   episodesWatched: number;
-  totalEpisodes: number;
+  totalEpisodes: number; // 0 if unknown/ongoing
+  watchedEpisodeIds: number[]; // Specific episode numbers toggled
   status: WatchStatus;
-  score?: number;
+  score: number; // 0-10
+  notes?: string;
+  airingStatus?: string;
+  updatedAt: number;
 }
 
 export interface MangaProgress {
   malId: number;
   title: string;
+  titleEnglish?: string | null;
+  coverImage: string;
+  format: "Manga" | "Light Novel" | "One-shot" | "Manhwa" | "Manhua" | string;
   chaptersRead: number;
-  totalChapters: number | null;
+  totalChapters: number; // 0 if unknown/ongoing
   volumesRead: number;
-  totalVolumes: number | null;
+  totalVolumes: number; // 0 if unknown/ongoing
+  readVolumeNumbers: number[]; // Specific volume numbers toggled
   status: ReadStatus;
-  score?: number;
+  score: number; // 0-10
+  notes?: string;
+  publishingStatus?: string;
+  updatedAt: number;
 }
 
 export interface UnifiedFranchiseEntry {
-  franchiseId: string;
+  franchiseId: string; // "franchise_{rootMalId}"
   rootMalId: number;
   title: string;
+  titleEnglish?: string | null;
   coverImage: string;
+  bannerImage?: string;
+  genres: string[];
+  addedAt: number;
   updatedAt: number;
-  activeSeasonMalId?: number;
+  isFavorite: boolean;
+  // Map any child mal_id (e.g. Season 2, Season 3, Manga ID) to this entry
+  linkedMalIds: number[];
   anime?: {
     overallStatus: WatchStatus;
+    activeSeasonMalId: number;
     seasons: Record<number, SeasonProgress>;
   };
-  manga?: Record<number, MangaProgress>;
+  manga?: {
+    overallStatus: ReadStatus;
+    activeMangaMalId: number;
+    series: Record<number, MangaProgress>;
+  };
 }
 
-const FRANCHISE_STORAGE_KEY = "okami_franchises";
+// ─── Storage Keys & Constants ───
 
-// ─── Franchise Storage Helpers ───
+const STORAGE_KEY_LEGACY = "okami_entries";
+const STORAGE_KEY_FRANCHISES = "okami_franchises";
+const STORAGE_KEY_STORE_V2 = "okami_v2_store";
+const STORAGE_EVENT_NAME = "okami-storage-update";
 
-export function loadFranchiseEntries(): Record<string, UnifiedFranchiseEntry> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(FRANCHISE_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-export function saveFranchiseEntries(entries: Record<string, UnifiedFranchiseEntry>): void {
+function emitStorageUpdate() {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(FRANCHISE_STORAGE_KEY, JSON.stringify(entries));
+  window.dispatchEvent(new CustomEvent(STORAGE_EVENT_NAME));
 }
 
-export function getFranchiseEntry(
-  entries: Record<string, UnifiedFranchiseEntry>,
-  franchiseId: string
-): UnifiedFranchiseEntry | undefined {
-  return entries[franchiseId];
-}
+// ─── Status Mapping ───
 
-export function findFranchiseByMalId(
-  entries: Record<string, UnifiedFranchiseEntry>,
-  malId: number
-): UnifiedFranchiseEntry | undefined {
-  return Object.values(entries).find((f) => {
-    if (f.rootMalId === malId) return true;
-    if (f.anime) {
-      for (const seasonId of Object.keys(f.anime.seasons)) {
-        if (Number(seasonId) === malId) return true;
-      }
-    }
-    if (f.manga) {
-      for (const mangaId of Object.keys(f.manga)) {
-        if (Number(mangaId) === malId) return true;
-      }
-    }
-    return false;
-  });
-}
-
-export function upsertFranchiseEntry(
-  entries: Record<string, UnifiedFranchiseEntry>,
-  franchise: UnifiedFranchiseEntry
-): Record<string, UnifiedFranchiseEntry> {
-  return { ...entries, [franchise.franchiseId]: { ...franchise, updatedAt: Date.now() } };
-}
-
-export function removeFranchiseEntry(
-  entries: Record<string, UnifiedFranchiseEntry>,
-  franchiseId: string
-): Record<string, UnifiedFranchiseEntry> {
-  const next = { ...entries };
-  delete next[franchiseId];
-  return next;
-}
-
-// ─── Episode Increment with Auto-Rollup ───
-
-export function incrementEpisode(
-  entries: Record<string, UnifiedFranchiseEntry>,
-  franchiseId: string,
-  seasonMalId: number
-): Record<string, UnifiedFranchiseEntry> {
-  const franchise = entries[franchiseId];
-  if (!franchise?.anime?.seasons[seasonMalId]) return entries;
-
-  const season = { ...franchise.anime.seasons[seasonMalId] };
-  const maxEps = season.totalEpisodes > 0 ? season.totalEpisodes : Infinity;
-  season.episodesWatched = Math.min(season.episodesWatched + 1, maxEps);
-
-  // Start watching if it was planned
-  if (season.status === "PLAN_TO_WATCH" && season.episodesWatched > 0) {
-    season.status = "WATCHING";
-  }
-
-  // Auto-complete season when all episodes watched
-  if (season.totalEpisodes > 0 && season.episodesWatched >= season.totalEpisodes) {
-    season.status = "COMPLETED";
-  }
-
-  const newSeasons = { ...franchise.anime.seasons, [seasonMalId]: season };
-
-  // Auto-advance active season to next chronological season if current completed
-  let activeSeasonMalId = franchise.activeSeasonMalId;
-  if (season.status === "COMPLETED" && activeSeasonMalId === seasonMalId) {
-    const sortedSeasons = Object.values(newSeasons).sort(
-      (a, b) => a.seasonNumber - b.seasonNumber
-    );
-    const nextSeason = sortedSeasons.find(
-      (s) => s.seasonNumber > season.seasonNumber && s.status !== "COMPLETED"
-    );
-    if (nextSeason) {
-      activeSeasonMalId = nextSeason.malId;
-      // Auto-set next season to WATCHING
-      newSeasons[nextSeason.malId] = { ...newSeasons[nextSeason.malId], status: "WATCHING" };
-    }
-  }
-
-  // Check overall completion
-  const allCompleted = Object.values(newSeasons).every((s) => s.status === "COMPLETED");
-  const overallStatus: WatchStatus = allCompleted
-    ? "COMPLETED"
-    : franchise.anime.overallStatus === "PLAN_TO_WATCH"
-      ? "WATCHING"
-      : franchise.anime.overallStatus;
-
-  return {
-    ...entries,
-    [franchiseId]: {
-      ...franchise,
-      activeSeasonMalId,
-      updatedAt: Date.now(),
-      anime: {
-        ...franchise.anime,
-        overallStatus,
-        seasons: newSeasons,
-      },
-    },
-  };
-}
-
-// ─── Manga Progress Update ───
-
-export function updateMangaProgress(
-  entries: Record<string, UnifiedFranchiseEntry>,
-  franchiseId: string,
-  mangaMalId: number,
-  patch: { chaptersRead?: number; volumesRead?: number; status?: ReadStatus }
-): Record<string, UnifiedFranchiseEntry> {
-  const franchise = entries[franchiseId];
-  if (!franchise?.manga?.[mangaMalId]) return entries;
-
-  const manga = { ...franchise.manga[mangaMalId], ...patch };
-
-  // Start reading if it was planned
-  if (manga.status === "PLAN_TO_READ" && (manga.chaptersRead > 0 || manga.volumesRead > 0)) {
-    manga.status = "READING";
-  }
-
-  // Auto-complete when all chapters read
-  if (
-    manga.totalChapters !== null &&
-    manga.totalChapters > 0 &&
-    manga.chaptersRead >= manga.totalChapters
-  ) {
-    manga.status = "COMPLETED";
-  }
-
-  return {
-    ...entries,
-    [franchiseId]: {
-      ...franchise,
-      updatedAt: Date.now(),
-      manga: {
-        ...franchise.manga,
-        [mangaMalId]: manga,
-      },
-    },
-  };
-}
-
-export function incrementChapter(
-  entries: Record<string, UnifiedFranchiseEntry>,
-  franchiseId: string,
-  mangaMalId: number
-): Record<string, UnifiedFranchiseEntry> {
-  const franchise = entries[franchiseId];
-  if (!franchise?.manga?.[mangaMalId]) return entries;
-
-  const manga = franchise.manga[mangaMalId];
-  const maxCh = manga.totalChapters !== null && manga.totalChapters > 0 ? manga.totalChapters : Infinity;
-  return updateMangaProgress(entries, franchiseId, mangaMalId, {
-    chaptersRead: Math.min(manga.chaptersRead + 1, maxCh),
-  });
-}
-
-export function incrementVolume(
-  entries: Record<string, UnifiedFranchiseEntry>,
-  franchiseId: string,
-  mangaMalId: number
-): Record<string, UnifiedFranchiseEntry> {
-  const franchise = entries[franchiseId];
-  if (!franchise?.manga?.[mangaMalId]) return entries;
-
-  const manga = franchise.manga[mangaMalId];
-  const maxVol = manga.totalVolumes !== null && manga.totalVolumes > 0 ? manga.totalVolumes : Infinity;
-  return updateMangaProgress(entries, franchiseId, mangaMalId, {
-    volumesRead: Math.min(manga.volumesRead + 1, maxVol),
-  });
-}
-
-// ─── Legacy ↔ Franchise Status Mapping ───
-
-function mapLegacyToWatchStatus(status: OkamiStatus): WatchStatus {
+export function mapLegacyToWatchStatus(status: OkamiStatus): WatchStatus {
   const map: Record<OkamiStatus, WatchStatus> = {
     watching: "WATCHING",
     completed: "COMPLETED",
@@ -344,7 +118,7 @@ function mapLegacyToWatchStatus(status: OkamiStatus): WatchStatus {
   return map[status] ?? "PLAN_TO_WATCH";
 }
 
-function mapLegacyToReadStatus(status: OkamiStatus): ReadStatus {
+export function mapLegacyToReadStatus(status: OkamiStatus): ReadStatus {
   const map: Record<OkamiStatus, ReadStatus> = {
     watching: "READING",
     completed: "COMPLETED",
@@ -377,76 +151,663 @@ export function mapReadStatusToLegacy(status: ReadStatus): OkamiStatus {
   return map[status] ?? "plan_to_watch";
 }
 
-// ─── Migration: Legacy → Unified Franchise ───
+// ─── Franchise Storage Operations ───
+
+export function loadFranchiseEntries(): Record<string, UnifiedFranchiseEntry> {
+  if (typeof window === "undefined") return {};
+  try {
+    // Check v2 store first, then fallback to okami_franchises
+    const rawV2 = window.localStorage.getItem(STORAGE_KEY_STORE_V2);
+    if (rawV2) {
+      const parsed = JSON.parse(rawV2);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, UnifiedFranchiseEntry>;
+      }
+    }
+
+    const raw = window.localStorage.getItem(STORAGE_KEY_FRANCHISES);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveFranchiseEntries(entries: Record<string, UnifiedFranchiseEntry>): void {
+  if (typeof window === "undefined") return;
+  const serialized = JSON.stringify(entries);
+  window.localStorage.setItem(STORAGE_KEY_FRANCHISES, serialized);
+  window.localStorage.setItem(STORAGE_KEY_STORE_V2, serialized);
+  emitStorageUpdate();
+}
+
+export function getFranchiseEntry(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string
+): UnifiedFranchiseEntry | undefined {
+  return entries[franchiseId];
+}
+
+/** Looks up franchise by any child mal_id (rootMalId, linkedMalIds, season malId, manga malId) */
+export function findFranchiseByMalId(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  malId: number
+): UnifiedFranchiseEntry | undefined {
+  if (!Number.isFinite(malId) || malId <= 0) return undefined;
+  return Object.values(entries).find((f) => {
+    if (f.rootMalId === malId) return true;
+    if (Array.isArray(f.linkedMalIds) && f.linkedMalIds.includes(malId)) return true;
+    if (f.anime?.seasons) {
+      if (malId in f.anime.seasons || Object.values(f.anime.seasons).some((s) => s.malId === malId)) {
+        return true;
+      }
+    }
+    if (f.manga?.series) {
+      if (malId in f.manga.series || Object.values(f.manga.series).some((s) => s.malId === malId)) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+export function getFranchiseByMalId(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  malId: number
+): UnifiedFranchiseEntry | undefined {
+  return findFranchiseByMalId(entries, malId);
+}
+
+export function upsertFranchiseEntry(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchise: UnifiedFranchiseEntry
+): Record<string, UnifiedFranchiseEntry> {
+  const updated = {
+    ...entries,
+    [franchise.franchiseId]: {
+      ...franchise,
+      updatedAt: Date.now(),
+    },
+  };
+  saveFranchiseEntries(updated);
+  return updated;
+}
+
+export function removeFranchiseEntry(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string
+): Record<string, UnifiedFranchiseEntry> {
+  const next = { ...entries };
+  delete next[franchiseId];
+  saveFranchiseEntries(next);
+  return next;
+}
+
+// ─── Smart Episode Progression & Auto-Rollup Logic ───
+
+export function incrementEpisode(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  seasonMalId: number
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  if (!franchise?.anime?.seasons[seasonMalId]) return entries;
+
+  const currentSeason = franchise.anime.seasons[seasonMalId];
+  const maxEps = currentSeason.totalEpisodes > 0 ? currentSeason.totalEpisodes : Infinity;
+  const newWatchedCount = Math.min(currentSeason.episodesWatched + 1, maxEps);
+
+  const watchedSet = new Set(currentSeason.watchedEpisodeIds || []);
+  watchedSet.add(newWatchedCount);
+
+  let newSeasonStatus: WatchStatus = currentSeason.status;
+  if (newSeasonStatus === "PLAN_TO_WATCH" && newWatchedCount > 0) {
+    newSeasonStatus = "WATCHING";
+  }
+  if (currentSeason.totalEpisodes > 0 && newWatchedCount >= currentSeason.totalEpisodes) {
+    newSeasonStatus = "COMPLETED";
+  }
+
+  const updatedSeason: SeasonProgress = {
+    ...currentSeason,
+    episodesWatched: newWatchedCount,
+    watchedEpisodeIds: Array.from(watchedSet).sort((a, b) => a - b),
+    status: newSeasonStatus,
+    updatedAt: Date.now(),
+  };
+
+  const updatedSeasons = {
+    ...franchise.anime.seasons,
+    [seasonMalId]: updatedSeason,
+  };
+
+  // Auto-advance active season to next chronological season if current completed
+  let activeSeasonMalId = franchise.anime.activeSeasonMalId || seasonMalId;
+  if (newSeasonStatus === "COMPLETED" && activeSeasonMalId === seasonMalId) {
+    const sortedSeasons = Object.values(updatedSeasons).sort(
+      (a, b) => a.seasonNumber - b.seasonNumber
+    );
+    const nextSeason = sortedSeasons.find(
+      (s) => s.seasonNumber > currentSeason.seasonNumber && s.status !== "COMPLETED"
+    );
+    if (nextSeason) {
+      activeSeasonMalId = nextSeason.malId;
+      updatedSeasons[nextSeason.malId] = {
+        ...updatedSeasons[nextSeason.malId],
+        status: "WATCHING",
+        updatedAt: Date.now(),
+      };
+    }
+  }
+
+  // Roll up overall franchise watch status
+  const allCompleted = Object.values(updatedSeasons).every((s) => s.status === "COMPLETED");
+  const overallStatus: WatchStatus = allCompleted
+    ? "COMPLETED"
+    : franchise.anime.overallStatus === "PLAN_TO_WATCH"
+      ? "WATCHING"
+      : franchise.anime.overallStatus;
+
+  const nextFranchises: Record<string, UnifiedFranchiseEntry> = {
+    ...entries,
+    [franchiseId]: {
+      ...franchise,
+      updatedAt: Date.now(),
+      anime: {
+        ...franchise.anime,
+        activeSeasonMalId,
+        overallStatus,
+        seasons: updatedSeasons,
+      },
+    },
+  };
+
+  saveFranchiseEntries(nextFranchises);
+  return nextFranchises;
+}
+
+export function toggleEpisode(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  seasonMalId: number,
+  episodeNumber: number
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  if (!franchise?.anime?.seasons[seasonMalId]) return entries;
+
+  const currentSeason = franchise.anime.seasons[seasonMalId];
+  const watchedSet = new Set(currentSeason.watchedEpisodeIds || []);
+
+  if (watchedSet.has(episodeNumber)) {
+    watchedSet.delete(episodeNumber);
+  } else {
+    watchedSet.add(episodeNumber);
+  }
+
+  const watchedArray = Array.from(watchedSet).sort((a, b) => a - b);
+  const episodesWatched = watchedArray.length;
+
+  let newSeasonStatus: WatchStatus = currentSeason.status;
+  if (currentSeason.totalEpisodes > 0 && episodesWatched >= currentSeason.totalEpisodes) {
+    newSeasonStatus = "COMPLETED";
+  } else if (episodesWatched > 0) {
+    newSeasonStatus = "WATCHING";
+  } else if (episodesWatched === 0 && currentSeason.status === "WATCHING") {
+    newSeasonStatus = "PLAN_TO_WATCH";
+  }
+
+  const updatedSeason: SeasonProgress = {
+    ...currentSeason,
+    episodesWatched,
+    watchedEpisodeIds: watchedArray,
+    status: newSeasonStatus,
+    updatedAt: Date.now(),
+  };
+
+  const updatedSeasons = {
+    ...franchise.anime.seasons,
+    [seasonMalId]: updatedSeason,
+  };
+
+  let activeSeasonMalId = franchise.anime.activeSeasonMalId || seasonMalId;
+  if (newSeasonStatus === "COMPLETED" && activeSeasonMalId === seasonMalId) {
+    const sortedSeasons = Object.values(updatedSeasons).sort(
+      (a, b) => a.seasonNumber - b.seasonNumber
+    );
+    const nextSeason = sortedSeasons.find(
+      (s) => s.seasonNumber > currentSeason.seasonNumber && s.status !== "COMPLETED"
+    );
+    if (nextSeason) {
+      activeSeasonMalId = nextSeason.malId;
+      updatedSeasons[nextSeason.malId] = {
+        ...updatedSeasons[nextSeason.malId],
+        status: "WATCHING",
+        updatedAt: Date.now(),
+      };
+    }
+  }
+
+  const allCompleted = Object.values(updatedSeasons).every((s) => s.status === "COMPLETED");
+  const overallStatus: WatchStatus = allCompleted
+    ? "COMPLETED"
+    : franchise.anime.overallStatus === "PLAN_TO_WATCH" && episodesWatched > 0
+      ? "WATCHING"
+      : franchise.anime.overallStatus;
+
+  const nextFranchises: Record<string, UnifiedFranchiseEntry> = {
+    ...entries,
+    [franchiseId]: {
+      ...franchise,
+      updatedAt: Date.now(),
+      anime: {
+        ...franchise.anime,
+        activeSeasonMalId,
+        overallStatus,
+        seasons: updatedSeasons,
+      },
+    },
+  };
+
+  saveFranchiseEntries(nextFranchises);
+  return nextFranchises;
+}
+
+export function bulkWatchEpisodes(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  seasonMalId: number,
+  upToEpisode: number
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  if (!franchise?.anime?.seasons[seasonMalId]) return entries;
+
+  const currentSeason = franchise.anime.seasons[seasonMalId];
+  const watchedSet = new Set<number>();
+  for (let i = 1; i <= upToEpisode; i++) {
+    watchedSet.add(i);
+  }
+
+  const watchedArray = Array.from(watchedSet).sort((a, b) => a - b);
+  const episodesWatched = watchedArray.length;
+
+  const newSeasonStatus: WatchStatus =
+    currentSeason.totalEpisodes > 0 && episodesWatched >= currentSeason.totalEpisodes
+      ? "COMPLETED"
+      : "WATCHING";
+
+  const updatedSeason: SeasonProgress = {
+    ...currentSeason,
+    episodesWatched,
+    watchedEpisodeIds: watchedArray,
+    status: newSeasonStatus,
+    updatedAt: Date.now(),
+  };
+
+  const updatedSeasons = {
+    ...franchise.anime.seasons,
+    [seasonMalId]: updatedSeason,
+  };
+
+  let activeSeasonMalId = franchise.anime.activeSeasonMalId || seasonMalId;
+  if (newSeasonStatus === "COMPLETED" && activeSeasonMalId === seasonMalId) {
+    const sortedSeasons = Object.values(updatedSeasons).sort(
+      (a, b) => a.seasonNumber - b.seasonNumber
+    );
+    const nextSeason = sortedSeasons.find(
+      (s) => s.seasonNumber > currentSeason.seasonNumber && s.status !== "COMPLETED"
+    );
+    if (nextSeason) {
+      activeSeasonMalId = nextSeason.malId;
+      updatedSeasons[nextSeason.malId] = {
+        ...updatedSeasons[nextSeason.malId],
+        status: "WATCHING",
+        updatedAt: Date.now(),
+      };
+    }
+  }
+
+  const allCompleted = Object.values(updatedSeasons).every((s) => s.status === "COMPLETED");
+  const overallStatus: WatchStatus = allCompleted ? "COMPLETED" : "WATCHING";
+
+  const nextFranchises: Record<string, UnifiedFranchiseEntry> = {
+    ...entries,
+    [franchiseId]: {
+      ...franchise,
+      updatedAt: Date.now(),
+      anime: {
+        ...franchise.anime,
+        activeSeasonMalId,
+        overallStatus,
+        seasons: updatedSeasons,
+      },
+    },
+  };
+
+  saveFranchiseEntries(nextFranchises);
+  return nextFranchises;
+}
+
+export function markSeasonCompleted(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  seasonMalId: number,
+  knownTotalEpisodes?: number
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  if (!franchise?.anime?.seasons[seasonMalId]) return entries;
+
+  const currentSeason = franchise.anime.seasons[seasonMalId];
+  const total = currentSeason.totalEpisodes > 0 ? currentSeason.totalEpisodes : knownTotalEpisodes || 12;
+
+  return bulkWatchEpisodes(entries, franchiseId, seasonMalId, total);
+}
+
+// ─── Smart Manga Progression & Auto-Rollup Logic ───
+
+export function updateMangaProgress(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  mangaMalId: number,
+  patch: Partial<MangaProgress>
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  if (!franchise?.manga?.series[mangaMalId]) return entries;
+
+  const currentManga = franchise.manga.series[mangaMalId];
+  const updatedManga: MangaProgress = {
+    ...currentManga,
+    ...patch,
+    updatedAt: Date.now(),
+  };
+
+  // Start reading if it was planned
+  if (
+    updatedManga.status === "PLAN_TO_READ" &&
+    (updatedManga.chaptersRead > 0 || updatedManga.volumesRead > 0)
+  ) {
+    updatedManga.status = "READING";
+  }
+
+  // Auto-complete when all chapters read
+  if (
+    updatedManga.totalChapters > 0 &&
+    updatedManga.chaptersRead >= updatedManga.totalChapters
+  ) {
+    updatedManga.status = "COMPLETED";
+  }
+
+  const updatedSeries = {
+    ...franchise.manga.series,
+    [mangaMalId]: updatedManga,
+  };
+
+  const allCompleted = Object.values(updatedSeries).every((m) => m.status === "COMPLETED");
+  const overallStatus: ReadStatus = allCompleted
+    ? "COMPLETED"
+    : franchise.manga.overallStatus === "PLAN_TO_READ" && updatedManga.chaptersRead > 0
+      ? "READING"
+      : franchise.manga.overallStatus;
+
+  const nextFranchises: Record<string, UnifiedFranchiseEntry> = {
+    ...entries,
+    [franchiseId]: {
+      ...franchise,
+      updatedAt: Date.now(),
+      manga: {
+        ...franchise.manga,
+        overallStatus,
+        series: updatedSeries,
+      },
+    },
+  };
+
+  saveFranchiseEntries(nextFranchises);
+  return nextFranchises;
+}
+
+export function incrementChapter(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  mangaMalId: number
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  const manga = franchise?.manga?.series[mangaMalId];
+  if (!manga) return entries;
+
+  const maxCh = manga.totalChapters > 0 ? manga.totalChapters : Infinity;
+  return updateMangaProgress(entries, franchiseId, mangaMalId, {
+    chaptersRead: Math.min(manga.chaptersRead + 1, maxCh),
+  });
+}
+
+export function incrementVolume(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  mangaMalId: number
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  const manga = franchise?.manga?.series[mangaMalId];
+  if (!manga) return entries;
+
+  const maxVol = manga.totalVolumes > 0 ? manga.totalVolumes : Infinity;
+  const newVol = Math.min(manga.volumesRead + 1, maxVol);
+  const readSet = new Set(manga.readVolumeNumbers || []);
+  readSet.add(newVol);
+
+  return updateMangaProgress(entries, franchiseId, mangaMalId, {
+    volumesRead: newVol,
+    readVolumeNumbers: Array.from(readSet).sort((a, b) => a - b),
+  });
+}
+
+export function toggleVolume(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  mangaMalId: number,
+  volumeNumber: number
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  const manga = franchise?.manga?.series[mangaMalId];
+  if (!manga) return entries;
+
+  const readSet = new Set(manga.readVolumeNumbers || []);
+  if (readSet.has(volumeNumber)) {
+    readSet.delete(volumeNumber);
+  } else {
+    readSet.add(volumeNumber);
+  }
+
+  const readArray = Array.from(readSet).sort((a, b) => a - b);
+  return updateMangaProgress(entries, franchiseId, mangaMalId, {
+    volumesRead: readArray.length,
+    readVolumeNumbers: readArray,
+  });
+}
+
+// ─── Legacy Storage CRUD (with cross-sync to Unified) ───
+
+export function loadEntries(): OkamiEntry[] {
+  return readEntries();
+}
+
+export function readEntries(): OkamiEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY_LEGACY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as OkamiEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveEntries(entries: OkamiEntry[]): void {
+  writeEntries(entries);
+}
+
+export function writeEntries(entries: OkamiEntry[]): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(STORAGE_KEY_LEGACY, JSON.stringify(entries));
+  emitStorageUpdate();
+}
+
+export function addEntry(entries: OkamiEntry[], entry: OkamiEntry): OkamiEntry[] {
+  const exists = entries.some((existing) => existing.id === entry.id && existing.type === entry.type);
+  if (exists) return entries;
+  const next = [...entries, { ...entry, date_added: new Date().toISOString() }];
+  saveEntries(next);
+  return next;
+}
+
+export function upsertEntry(entries: OkamiEntry[], entry: OkamiEntry): OkamiEntry[] {
+  const index = entries.findIndex((existing) => existing.id === entry.id && existing.type === entry.type);
+  let next: OkamiEntry[];
+  if (index === -1) {
+    next = [entry, ...entries];
+  } else {
+    next = [...entries];
+    next[index] = entry;
+  }
+  saveEntries(next);
+  return next;
+}
+
+export function updateEntry(
+  entries: OkamiEntry[],
+  id: number,
+  type: MediaType,
+  patch: Partial<OkamiEntry>
+): OkamiEntry[] {
+  const next = entries.map((entry) =>
+    entry.id === id && entry.type === type ? { ...entry, ...patch } : entry
+  );
+  saveEntries(next);
+  return next;
+}
+
+export function removeEntry(entries: OkamiEntry[], id: number, type: MediaType): OkamiEntry[] {
+  const next = entries.filter((entry) => !(entry.id === id && entry.type === type));
+  saveEntries(next);
+  return next;
+}
+
+export function toggleFavourite(entries: OkamiEntry[], id: number, type: MediaType): OkamiEntry[] {
+  const next = entries.map((entry) =>
+    entry.id === id && entry.type === type
+      ? { ...entry, is_favourite: !entry.is_favourite }
+      : entry
+  );
+  saveEntries(next);
+  return next;
+}
+
+// ─── Non-Destructive Migration: Legacy → Unified Franchise ───
 
 function resolveFormatType(format: string): "TV" | "Movie" | "OVA" | "Special" | "ONA" {
-  if (format === "Film" || format === "Movie") return "Movie";
-  if (format === "OVA") return "OVA";
-  if (format === "ONA") return "ONA";
-  if (format === "Special" || format === "TV Special") return "Special";
+  const lower = format.toLowerCase();
+  if (lower.includes("film") || lower.includes("movie")) return "Movie";
+  if (lower.includes("ova")) return "OVA";
+  if (lower.includes("ona")) return "ONA";
+  if (lower.includes("special")) return "Special";
   return "TV";
 }
 
 export function migrateLegacyEntries(): void {
   if (typeof window === "undefined") return;
 
-  const migrated = window.localStorage.getItem("okami_migration_v2");
-  if (migrated === "done") return;
+  const migratedKey = "okami_migration_v2_completed";
+  if (window.localStorage.getItem(migratedKey) === "done") return;
 
-  const legacyEntries = loadEntries();
-  if (legacyEntries.length === 0) {
-    window.localStorage.setItem("okami_migration_v2", "done");
+  const legacy = loadEntries();
+  if (legacy.length === 0) {
+    window.localStorage.setItem(migratedKey, "done");
     return;
   }
 
   const franchises = loadFranchiseEntries();
 
-  for (const entry of legacyEntries) {
+  for (const entry of legacy) {
     const franchiseId = `franchise_${entry.id}`;
     if (franchises[franchiseId]) continue;
 
+    const now = Date.now();
     if (entry.type === "anime") {
       const watchStatus = mapLegacyToWatchStatus(entry.status);
+      const totalEps = entry.total ?? 0;
+      const watchedCount = entry.progress || 0;
+      const watchedIds =
+        entry.completed_episodes && entry.completed_episodes.length > 0
+          ? entry.completed_episodes
+          : Array.from({ length: watchedCount }, (_, i) => i + 1);
+
       franchises[franchiseId] = {
         franchiseId,
         rootMalId: entry.id,
         title: entry.title,
         coverImage: entry.cover,
-        updatedAt: Date.now(),
-        activeSeasonMalId: entry.id,
+        genres: entry.genres || [],
+        addedAt: new Date(entry.date_added || Date.now()).getTime(),
+        updatedAt: now,
+        isFavorite: Boolean(entry.is_favourite),
+        linkedMalIds: [entry.id],
         anime: {
           overallStatus: watchStatus,
+          activeSeasonMalId: entry.id,
           seasons: {
             [entry.id]: {
               malId: entry.id,
               title: entry.title,
+              coverImage: entry.cover,
               type: resolveFormatType(entry.format),
               seasonNumber: 1,
-              episodesWatched: entry.progress,
-              totalEpisodes: entry.total ?? 0,
+              episodesWatched: watchedCount,
+              totalEpisodes: totalEps,
+              watchedEpisodeIds: watchedIds,
               status: watchStatus,
-              score: entry.user_score ?? undefined,
+              score: entry.user_score ?? 0,
+              notes: entry.notes || "",
+              updatedAt: now,
             },
           },
         },
       };
     } else {
+      const readStatus = mapLegacyToReadStatus(entry.status);
+      const totalCh = entry.total ?? 0;
+      const chRead = entry.progress || 0;
+      const volsRead = entry.completed_volumes?.length || 0;
+
       franchises[franchiseId] = {
         franchiseId,
         rootMalId: entry.id,
         title: entry.title,
         coverImage: entry.cover,
-        updatedAt: Date.now(),
+        genres: entry.genres || [],
+        addedAt: new Date(entry.date_added || Date.now()).getTime(),
+        updatedAt: now,
+        isFavorite: Boolean(entry.is_favourite),
+        linkedMalIds: [entry.id],
         manga: {
-          [entry.id]: {
-            malId: entry.id,
-            title: entry.title,
-            chaptersRead: entry.progress,
-            totalChapters: entry.total,
-            volumesRead: 0,
-            totalVolumes: null,
-            status: mapLegacyToReadStatus(entry.status),
-            score: entry.user_score ?? undefined,
+          overallStatus: readStatus,
+          activeMangaMalId: entry.id,
+          series: {
+            [entry.id]: {
+              malId: entry.id,
+              title: entry.title,
+              coverImage: entry.cover,
+              format: entry.format || "Manga",
+              chaptersRead: chRead,
+              totalChapters: totalCh,
+              volumesRead: volsRead,
+              totalVolumes: 0,
+              readVolumeNumbers: entry.completed_volumes || [],
+              status: readStatus,
+              score: entry.user_score ?? 0,
+              notes: entry.notes || "",
+              updatedAt: now,
+            },
           },
         },
       };
@@ -454,51 +815,51 @@ export function migrateLegacyEntries(): void {
   }
 
   saveFranchiseEntries(franchises);
-  window.localStorage.setItem("okami_migration_v2", "done");
+  window.localStorage.setItem(migratedKey, "done");
 }
 
-// ─── JSON Export / Import ───
+// ─── Reactive React Hook (Cross-tab and In-Memory Synchronization) ───
 
-export function exportAllData(): string {
-  const entries = loadEntries();
-  const franchises = loadFranchiseEntries();
-  return JSON.stringify(
-    { version: 2, entries, franchises, exportedAt: new Date().toISOString() },
-    null,
-    2
-  );
-}
+export function useOkamiStore() {
+  const [franchises, setFranchises] = useState<Record<string, UnifiedFranchiseEntry>>({});
+  const [entries, setEntries] = useState<OkamiEntry[]>([]);
+  const [isLoaded, setIsLoaded] = useState(false);
 
-export function importAllData(json: string): {
-  entries: OkamiEntry[];
-  franchises: Record<string, UnifiedFranchiseEntry>;
-} {
-  const data = JSON.parse(json);
+  const refresh = useCallback(() => {
+    migrateLegacyEntries();
+    setFranchises(loadFranchiseEntries());
+    setEntries(loadEntries());
+    setIsLoaded(true);
+  }, []);
 
-  // New versioned format
-  if (data && typeof data === "object" && data.version === 2) {
-    return {
-      entries: Array.isArray(data.entries) ? data.entries : [],
-      franchises:
-        typeof data.franchises === "object" && data.franchises !== null ? data.franchises : {},
+  useEffect(() => {
+    Promise.resolve().then(() => refresh());
+
+    const handleUpdate = () => {
+      setFranchises(loadFranchiseEntries());
+      setEntries(loadEntries());
     };
-  }
 
-  // Old format — plain array of entries
-  if (Array.isArray(data)) {
-    return { entries: data, franchises: {} };
-  }
+    window.addEventListener(STORAGE_EVENT_NAME, handleUpdate);
+    window.addEventListener("storage", handleUpdate);
 
-  // Old format with entries key
-  if (data && Array.isArray(data.entries)) {
-    return { entries: data.entries, franchises: {} };
-  }
+    return () => {
+      window.removeEventListener(STORAGE_EVENT_NAME, handleUpdate);
+      window.removeEventListener("storage", handleUpdate);
+    };
+  }, [refresh]);
 
-  throw new Error("Invalid backup format");
+  return {
+    franchises,
+    entries,
+    isLoaded,
+    refresh,
+    saveFranchises: saveFranchiseEntries,
+    saveEntries,
+  };
 }
 
-// ─── Franchise Display Helper ───
-// Converts a UnifiedFranchiseEntry to a display-friendly summary
+// ─── Display Helper ───
 
 export interface FranchiseDisplayInfo {
   franchiseId: string;
@@ -508,33 +869,41 @@ export interface FranchiseDisplayInfo {
   mediaType: "anime" | "manga" | "both";
   progressLabel: string; // e.g. "S2 • Ep 4/12" or "Vol 5 • Ch 42"
   overallStatus: OkamiStatus;
+  watchStatus?: WatchStatus;
+  readStatus?: ReadStatus;
   totalSeasons: number;
   activeSeasonNumber: number;
+  activeSeasonMalId?: number;
+  activeMangaMalId?: number;
+  isFavorite: boolean;
   updatedAt: number;
 }
 
 export function getFranchiseDisplayInfo(
   franchise: UnifiedFranchiseEntry
 ): FranchiseDisplayInfo {
-  const hasAnime = Boolean(franchise.anime && Object.keys(franchise.anime.seasons).length > 0);
-  const hasManga = Boolean(franchise.manga && Object.keys(franchise.manga).length > 0);
+  const animeSeasons = franchise.anime ? Object.values(franchise.anime.seasons) : [];
+  const mangaSeries = franchise.manga ? Object.values(franchise.manga.series) : [];
+
+  const hasAnime = animeSeasons.length > 0;
+  const hasManga = mangaSeries.length > 0;
 
   let progressLabel = "";
   let overallStatus: OkamiStatus = "plan_to_watch";
-  let totalSeasons = 0;
-  let activeSeasonNumber = 0;
+  const totalSeasons = animeSeasons.length;
+  let activeSeasonNumber = 1;
+  let activeSeasonMalId = franchise.anime?.activeSeasonMalId;
+  let activeMangaMalId = franchise.manga?.activeMangaMalId;
 
   if (hasAnime && franchise.anime) {
-    const seasons = Object.values(franchise.anime.seasons);
-    totalSeasons = seasons.length;
     overallStatus = mapWatchStatusToLegacy(franchise.anime.overallStatus);
-
-    const activeSeason = franchise.activeSeasonMalId
-      ? franchise.anime.seasons[franchise.activeSeasonMalId]
-      : seasons[0];
+    const activeSeason = activeSeasonMalId
+      ? franchise.anime.seasons[activeSeasonMalId]
+      : animeSeasons[0];
 
     if (activeSeason) {
       activeSeasonNumber = activeSeason.seasonNumber;
+      activeSeasonMalId = activeSeason.malId;
       const totalLabel = activeSeason.totalEpisodes > 0 ? String(activeSeason.totalEpisodes) : "?";
       progressLabel =
         totalSeasons > 1
@@ -542,14 +911,15 @@ export function getFranchiseDisplayInfo(
           : `Ep ${activeSeason.episodesWatched}/${totalLabel}`;
     }
   } else if (hasManga && franchise.manga) {
-    const firstManga = Object.values(franchise.manga)[0];
-    if (firstManga) {
-      overallStatus = mapReadStatusToLegacy(firstManga.status);
-      const chTotal =
-        firstManga.totalChapters !== null && firstManga.totalChapters > 0
-          ? String(firstManga.totalChapters)
-          : "?";
-      progressLabel = `Vol ${firstManga.volumesRead} • Ch ${firstManga.chaptersRead}/${chTotal}`;
+    const activeManga = activeMangaMalId
+      ? franchise.manga.series[activeMangaMalId]
+      : mangaSeries[0];
+
+    if (activeManga) {
+      activeMangaMalId = activeManga.malId;
+      overallStatus = mapReadStatusToLegacy(activeManga.status);
+      const chTotal = activeManga.totalChapters > 0 ? String(activeManga.totalChapters) : "?";
+      progressLabel = `Vol ${activeManga.volumesRead} • Ch ${activeManga.chaptersRead}/${chTotal}`;
     }
   }
 
@@ -561,8 +931,75 @@ export function getFranchiseDisplayInfo(
     mediaType: hasAnime && hasManga ? "both" : hasAnime ? "anime" : "manga",
     progressLabel,
     overallStatus,
+    watchStatus: franchise.anime?.overallStatus,
+    readStatus: franchise.manga?.overallStatus,
     totalSeasons,
     activeSeasonNumber,
+    activeSeasonMalId,
+    activeMangaMalId,
+    isFavorite: Boolean(franchise.isFavorite),
     updatedAt: franchise.updatedAt,
+  };
+}
+
+// ─── JSON Backup Export / Import ───
+
+export function exportLibraryAsJson(): string {
+  const entries = loadEntries();
+  const franchises = loadFranchiseEntries();
+  return JSON.stringify(
+    {
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      franchises,
+      entries,
+    },
+    null,
+    2
+  );
+}
+
+export function importLibraryFromJson(jsonString: string): boolean {
+  try {
+    const data = JSON.parse(jsonString);
+    if (!data || typeof data !== "object") return false;
+
+    if (data.version === 2 && data.franchises && typeof data.franchises === "object") {
+      saveFranchiseEntries(data.franchises);
+      if (Array.isArray(data.entries)) {
+        saveEntries(data.entries);
+      }
+      return true;
+    }
+
+    if (Array.isArray(data)) {
+      saveEntries(data as OkamiEntry[]);
+      migrateLegacyEntries();
+      return true;
+    }
+
+    if (Array.isArray(data.entries)) {
+      saveEntries(data.entries as OkamiEntry[]);
+      migrateLegacyEntries();
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Legacy aliases */
+export const exportAllData = exportLibraryAsJson;
+export function importAllData(json: string): {
+  entries: OkamiEntry[];
+  franchises: Record<string, UnifiedFranchiseEntry>;
+} {
+  const success = importLibraryFromJson(json);
+  if (!success) throw new Error("Invalid backup format");
+  return {
+    entries: loadEntries(),
+    franchises: loadFranchiseEntries(),
   };
 }

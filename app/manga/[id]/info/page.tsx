@@ -5,7 +5,23 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { FranchiseGraph, JikanCharacter, OkamiMedia } from "@/app/lib/jikan";
 import { fetchCharacters, fetchDetail, fetchFranchiseGraph } from "@/app/lib/api";
-import { addEntry, loadEntries, saveEntries, type OkamiEntry } from "@/app/lib/storage";
+import {
+  addEntry,
+  loadEntries,
+  saveEntries,
+  updateEntry,
+  type OkamiEntry,
+  type OkamiStatus,
+} from "@/app/lib/storage";
+
+const DEFAULT_STATUS: OkamiStatus = "plan_to_watch";
+const STATUS_OPTIONS: Array<{ value: OkamiStatus; label: string }> = [
+  { value: "watching", label: "Reading" },
+  { value: "completed", label: "Completed" },
+  { value: "on_hold", label: "On Hold" },
+  { value: "dropped", label: "Dropped" },
+  { value: "plan_to_watch", label: "Plan to Read" },
+];
 
 function buildMangaEntry(media: OkamiMedia): OkamiEntry {
   return {
@@ -18,7 +34,7 @@ function buildMangaEntry(media: OkamiMedia): OkamiEntry {
     genres: media.genres,
     official_score: media.official_score,
     user_score: null,
-    status: "plan_to_watch",
+    status: DEFAULT_STATUS,
     progress: 0,
     total: media.total ?? null,
     completed_seasons: [],
@@ -41,16 +57,55 @@ export default function MangaInfoPage() {
   const [loading, setLoading] = useState(true);
   const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
 
+  // Personal review & notes editor
+  const [userScore, setUserScore] = useState<number | null>(null);
+  const [userNotes, setUserNotes] = useState<string>("");
+  const [userStatus, setUserStatus] = useState<OkamiStatus>(DEFAULT_STATUS);
+
   const entry = useMemo(
     () => entries.find((item) => item.id === mangaId && item.type === "manga"),
     [entries, mangaId]
   );
 
+  useEffect(() => {
+    if (entry) {
+      Promise.resolve().then(() => {
+        setUserScore(entry.user_score);
+        setUserNotes(entry.notes || "");
+        setUserStatus(entry.status);
+      });
+    }
+  }, [entry]);
+
+  const commitEntries = (next: OkamiEntry[]) => {
+    saveEntries(next);
+    setEntries(next);
+  };
+
   const handleAdd = () => {
     if (!media || entry) return;
     const next = addEntry(entries, buildMangaEntry(media));
-    saveEntries(next);
-    setEntries(next);
+    commitEntries(next);
+  };
+
+  const handleSaveNotes = () => {
+    if (!entry && media) {
+      const nextEntry = {
+        ...buildMangaEntry(media),
+        user_score: userScore,
+        notes: userNotes,
+        status: userStatus,
+      };
+      commitEntries(addEntry(entries, nextEntry));
+    } else if (entry) {
+      commitEntries(
+        updateEntry(entries, mangaId, "manga", {
+          user_score: userScore,
+          notes: userNotes,
+          status: userStatus,
+        })
+      );
+    }
   };
 
   useEffect(() => {
@@ -70,7 +125,7 @@ export default function MangaInfoPage() {
       try {
         const [detail, cast, graph] = await Promise.all([
           fetchDetail("manga", mangaId),
-          fetchCharacters(mangaId).catch(() => []),
+          fetchCharacters(mangaId, "manga").catch(() => []),
           fetchFranchiseGraph(mangaId, "manga").catch(() => null),
         ]);
         if (!active) return;
@@ -119,6 +174,9 @@ export default function MangaInfoPage() {
             ← Back to Library
           </Link>
           {media ? <span className="detail-page-id">MAL Manga #{media.id}</span> : null}
+          <Link className="adaptation-pill manga-link" href={`/manga/${mangaId}`}>
+            📖 Open Interactive Manga Tracker →
+          </Link>
         </div>
         {linkedAnime ? (
           <Link className="adaptation-pill anime-link" href={`/anime/${linkedAnime.malId}/info`}>
@@ -127,6 +185,7 @@ export default function MangaInfoPage() {
         ) : null}
       </div>
 
+      {/* Hero Card */}
       <div className="detail-card detail-hero-card">
         {loading ? (
           <div className="detail-empty">Loading manga details…</div>
@@ -138,6 +197,11 @@ export default function MangaInfoPage() {
               <img className="detail-hero-cover" src={media.cover} alt={media.title} />
               <div>
                 <div className="detail-title">{media.title}</div>
+                {media.title_english && media.title_english !== media.title && (
+                  <div style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 8 }}>
+                    {media.title_english}
+                  </div>
+                )}
                 <div className="detail-meta">
                   <span>{media.year || "--"}</span>
                   <span>•</span>
@@ -153,11 +217,22 @@ export default function MangaInfoPage() {
                       <span>By {media.authors.join(", ")}</span>
                     </>
                   ) : null}
+                  {media.rank ? (
+                    <>
+                      <span>•</span>
+                      <span className="accent-text">Rank #{media.rank}</span>
+                    </>
+                  ) : null}
                 </div>
                 <div className="detail-tags">
                   {media.genres.map((tag) => (
                     <span className="tag" key={tag}>
                       {tag}
+                    </span>
+                  ))}
+                  {media.themes?.map((t) => (
+                    <span className="tag" key={t} style={{ borderColor: "var(--teal)", color: "var(--teal)" }}>
+                      {t}
                     </span>
                   ))}
                 </div>
@@ -173,11 +248,11 @@ export default function MangaInfoPage() {
                 {entry ? "In Library ✓" : "+ Add to Library"}
               </button>
               <Link className="modal-btn ghost" href={`/manga/${media.id}`}>
-                Open Manga Tracker →
+                Track Chapters & Volumes
               </Link>
               {linkedAnime ? (
                 <Link className="modal-btn ghost" href={`/anime/${linkedAnime.malId}`}>
-                  Track Anime
+                  Watch Anime Adaptation
                 </Link>
               ) : null}
               <span className="detail-score">
@@ -191,6 +266,7 @@ export default function MangaInfoPage() {
         )}
       </div>
 
+      {/* Synopsis Card */}
       <div className="detail-card detail-synopsis-card">
         {loading ? (
           <div className="detail-empty">Loading synopsis…</div>
@@ -204,64 +280,145 @@ export default function MangaInfoPage() {
         )}
       </div>
 
+      {/* Lower Grid: Details, Personal Notes & Characters */}
       <div className="detail-lower-grid">
-        <div className="detail-card detail-info-card">
-          <div className="detail-info-body">
-            <div className="detail-section">
-              <div className="detail-section-title">Overview</div>
-              {media ? (
-                <div className="detail-info-grid">
-                  <div className="info-item">
-                    <span className="info-label">Format</span>
-                    <span className="info-value">{media.format}</span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Chapters</span>
-                    <span className="info-value">{media.chapters ? String(media.chapters) : "Ongoing"}</span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Volumes</span>
-                    <span className="info-value">{media.volumes ? String(media.volumes) : "Ongoing"}</span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Year</span>
-                    <span className="info-value">{media.year || "--"}</span>
-                  </div>
-                  {media.authors && media.authors.length > 0 ? (
-                    <div className="info-item" style={{ gridColumn: "1 / -1" }}>
-                      <span className="info-label">Author(s)</span>
-                      <span className="info-value">{media.authors.join(", ")}</span>
+        {/* Left Column: Details & Personal Log */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div className="detail-card detail-info-card">
+            <div className="detail-info-body">
+              <div className="detail-section">
+                <div className="detail-section-title">Manga Information</div>
+                {media ? (
+                  <div className="detail-info-grid">
+                    <div className="info-item">
+                      <span className="info-label">Format</span>
+                      <span className="info-value">{media.format}</span>
                     </div>
-                  ) : null}
+                    <div className="info-item">
+                      <span className="info-label">Chapters</span>
+                      <span className="info-value">{media.chapters ? String(media.chapters) : "Ongoing"}</span>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-label">Volumes</span>
+                      <span className="info-value">{media.volumes ? String(media.volumes) : "Ongoing"}</span>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-label">Year Published</span>
+                      <span className="info-value">{media.year || "--"}</span>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-label">Status</span>
+                      <span className="info-value">{media.status || "--"}</span>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-label">Popularity</span>
+                      <span className="info-value">{media.popularity ? `#${media.popularity}` : "--"}</span>
+                    </div>
+                    {media.authors && media.authors.length > 0 ? (
+                      <div className="info-item" style={{ gridColumn: "1 / -1" }}>
+                        <span className="info-label">Author(s)</span>
+                        <span className="info-value">{media.authors.join(", ")}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          {/* User Review & Personal Notes Card */}
+          <div className="detail-card detail-info-card">
+            <div className="detail-info-body">
+              <div className="detail-section">
+                <div className="detail-section-title">Personal Reading Log & Rating</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <label className="info-label" style={{ display: "block", marginBottom: 6 }}>
+                      Reading Status
+                    </label>
+                    <div className="status-button-row">
+                      {STATUS_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          className={`status-button status-${opt.value.replace(/_/g, "-")} ${userStatus === opt.value ? "active" : ""}`}
+                          onClick={() => setUserStatus(opt.value)}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="info-label" style={{ display: "block", marginBottom: 6 }}>
+                      Your Score (1–10)
+                    </label>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          className={`pill ${userScore === num ? "active" : ""}`}
+                          style={{ minWidth: 32, textAlign: "center" }}
+                          onClick={() => setUserScore(userScore === num ? null : num)}
+                        >
+                          ★ {num}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="info-label" style={{ display: "block", marginBottom: 6 }}>
+                      Reading Notes & Highlights
+                    </label>
+                    <textarea
+                      className="search-input"
+                      rows={4}
+                      style={{ width: "100%", resize: "vertical", fontSize: 12, lineHeight: 1.5 }}
+                      placeholder="Track volume notes, character theories, favorite chapters..."
+                      value={userNotes}
+                      onChange={(e) => setUserNotes(e.target.value)}
+                    />
+                  </div>
+
+                  <button
+                    className="modal-btn primary"
+                    type="button"
+                    style={{ alignSelf: "flex-start", marginTop: 4 }}
+                    onClick={handleSaveNotes}
+                  >
+                    Save Notes & Rating
+                  </button>
                 </div>
-              ) : (
-                <div className="detail-empty">Overview unavailable.</div>
-              )}
+              </div>
             </div>
           </div>
         </div>
 
+        {/* Right Column: Characters */}
         <div className="detail-card detail-info-card">
           <div className="detail-info-body custom-scroll">
             <div className="detail-section">
               <div className="detail-section-title">Characters</div>
               {loading ? (
-                <div className="detail-empty">Loading cast…</div>
+                <div className="detail-empty">Loading characters…</div>
               ) : characters.length === 0 ? (
-                <div className="detail-empty">No cast data available.</div>
+                <div className="detail-empty">No character data available.</div>
               ) : (
                 <div className="cast-list">
-                  {characters.slice(0, 12).map((char) => (
-                    <div className="cast-card" key={char.id || char.name}>
+                  {characters.slice(0, 16).map((character) => (
+                    <div className="cast-card" key={character.id || character.name}>
                       <div className="cast-character">
-                        {char.image ? (
-                          <img className="cast-avatar" src={char.image} alt={char.name} />
+                        {character.image ? (
+                          <img className="cast-avatar" src={character.image} alt={character.name} />
                         ) : (
-                          <div className="cast-avatar fallback">{char.name.slice(0, 1)}</div>
+                          <div className="cast-avatar fallback">{character.name.slice(0, 1)}</div>
                         )}
                         <div>
-                          <div className="cast-name">{char.name}</div>
-                          <div className="cast-role">{char.role || "Character"}</div>
+                          <div className="cast-name">{character.name}</div>
+                          <div className="cast-role">{character.role || "Character"}</div>
                         </div>
                       </div>
                     </div>
@@ -275,4 +432,3 @@ export default function MangaInfoPage() {
     </div>
   );
 }
-

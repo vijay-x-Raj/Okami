@@ -3,18 +3,37 @@ import type {
   JikanCharacter,
   JikanEpisode,
   JikanRelation,
+  MangaVolumeData,
+  MangaVolumeItem,
   MediaType,
   OkamiMedia,
 } from "./jikan";
 
+export type { MangaVolumeData, MangaVolumeItem };
+
+// Backward compatibility alias
 export interface VolumeData {
   mal_id: number;
   volume_number: number;
   title: string;
 }
 
-async function getJson<T>(input: RequestInfo | URL): Promise<T> {
-  const response = await fetch(input, { headers: { "Content-Type": "application/json" } });
+export interface FetchEpisodesResponse {
+  episodes: JikanEpisode[];
+  pagination: {
+    last_visible_page: number;
+    has_next_page: boolean;
+  };
+}
+
+async function getJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers || {}),
+    },
+  });
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }
@@ -24,30 +43,57 @@ async function getJson<T>(input: RequestInfo | URL): Promise<T> {
 export async function searchMedia(
   type: MediaType,
   query: string,
-  options?: { genres?: string; season?: string; studio?: string; limit?: number }
-): Promise<OkamiMedia[]> {
+  options?: {
+    genres?: string;
+    season?: string;
+    studio?: string;
+    sort?: string;
+    format?: string;
+    status?: string;
+    year?: number;
+    page?: number;
+    limit?: number;
+    signal?: AbortSignal;
+  }
+): Promise<{ data: OkamiMedia[]; pagination?: { last_visible_page: number; has_next_page: boolean; total?: number } }> {
   const url = new URL("/api/jikan/search", window.location.origin);
   url.searchParams.set("type", type);
-  url.searchParams.set("q", query);
+  if (query) url.searchParams.set("q", query);
   if (options?.genres) url.searchParams.set("genres", options.genres);
   if (options?.season) url.searchParams.set("season", options.season);
   if (options?.studio) url.searchParams.set("studio", options.studio);
+  if (options?.sort) url.searchParams.set("sort", options.sort);
+  if (options?.format) url.searchParams.set("format", options.format);
+  if (options?.status) url.searchParams.set("status", options.status);
+  if (options?.year) url.searchParams.set("year", String(options.year));
+  if (options?.page) url.searchParams.set("page", String(options.page));
   if (options?.limit) url.searchParams.set("limit", String(options.limit));
-  const data = await getJson<{ data: OkamiMedia[] }>(url);
-  return data.data;
+
+  return getJson<{ data: OkamiMedia[]; pagination?: { last_visible_page: number; has_next_page: boolean; total?: number } }>(
+    url,
+    { signal: options?.signal }
+  );
 }
 
-export async function fetchTop(type: MediaType): Promise<OkamiMedia[]> {
+export async function fetchTop(
+  type: MediaType,
+  options?: { page?: number; limit?: number; filter?: string }
+): Promise<OkamiMedia[]> {
   const url = new URL("/api/jikan/top", window.location.origin);
   url.searchParams.set("type", type);
+  if (options?.page) url.searchParams.set("page", String(options.page));
+  if (options?.limit) url.searchParams.set("limit", String(options.limit));
+  if (options?.filter) url.searchParams.set("filter", options.filter);
   const data = await getJson<{ data: OkamiMedia[] }>(url);
-  return data.data;
+  return data.data || [];
 }
 
-export async function fetchSeason(): Promise<OkamiMedia[]> {
+export async function fetchSeason(options?: { page?: number; limit?: number }): Promise<OkamiMedia[]> {
   const url = new URL("/api/jikan/season", window.location.origin);
+  if (options?.page) url.searchParams.set("page", String(options.page));
+  if (options?.limit) url.searchParams.set("limit", String(options.limit));
   const data = await getJson<{ data: OkamiMedia[] }>(url);
-  return data.data;
+  return data.data || [];
 }
 
 export async function fetchDetail(type: MediaType, id: number): Promise<OkamiMedia> {
@@ -58,18 +104,31 @@ export async function fetchDetail(type: MediaType, id: number): Promise<OkamiMed
   return data.data;
 }
 
-export async function fetchEpisodes(id: number): Promise<JikanEpisode[]> {
+export async function fetchEpisodes(
+  id: number,
+  page: number = 1,
+  total?: number
+): Promise<FetchEpisodesResponse> {
   const url = new URL("/api/jikan/episodes", window.location.origin);
   url.searchParams.set("id", String(id));
-  const data = await getJson<{ episodes: JikanEpisode[] }>(url);
-  return data.episodes;
+  url.searchParams.set("page", String(page));
+  if (total) url.searchParams.set("total", String(total));
+
+  const data = await getJson<{
+    episodes: JikanEpisode[];
+    pagination?: { last_visible_page: number; has_next_page: boolean };
+  }>(url);
+
+  return {
+    episodes: data.episodes || [],
+    pagination: data.pagination || { last_visible_page: 1, has_next_page: false },
+  };
 }
 
-export async function fetchVolumes(id: number): Promise<VolumeData[]> {
+export async function fetchVolumes(id: number): Promise<MangaVolumeData> {
   const url = new URL("/api/jikan/volumes", window.location.origin);
   url.searchParams.set("id", String(id));
-  const data = await getJson<{ volumes: VolumeData[] }>(url);
-  return data.volumes;
+  return getJson<MangaVolumeData>(url);
 }
 
 export async function fetchRelated(type: MediaType, id: number): Promise<JikanRelation[]> {
@@ -77,14 +136,18 @@ export async function fetchRelated(type: MediaType, id: number): Promise<JikanRe
   url.searchParams.set("type", type);
   url.searchParams.set("id", String(id));
   const data = await getJson<{ related: JikanRelation[] }>(url);
-  return data.related;
+  return data.related || [];
 }
 
-export async function fetchCharacters(id: number): Promise<JikanCharacter[]> {
+export async function fetchCharacters(
+  id: number,
+  type: MediaType = "anime"
+): Promise<JikanCharacter[]> {
   const url = new URL("/api/jikan/characters", window.location.origin);
   url.searchParams.set("id", String(id));
+  url.searchParams.set("type", type);
   const data = await getJson<{ characters: JikanCharacter[] }>(url);
-  return data.characters;
+  return data.characters || [];
 }
 
 export async function fetchFranchiseGraph(
