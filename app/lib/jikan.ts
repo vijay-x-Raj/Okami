@@ -302,12 +302,61 @@ export function normalizeItem(item: JikanItem, type: MediaType): OkamiMedia {
   };
 }
 
-// ─── Singleton Rate-Limiting Queue & In-Memory Cache ───
-// Enforces minimum 360ms delay between outbound requests to Jikan API
-// with exponential backoff on HTTP 429/503 (up to 3 retries) and in-memory TTL caching.
+// ─── Mihon-Inspired Token-Bucket Rate-Limiting & Smart In-Memory Cache ───
+// Enforces max 3 requests/sec token bucket with exponential backoff on HTTP 429/502/503/504
+// and smart refresh gates skipping redundant network fetches for finished media.
 
-let _jikanQueueTail: Promise<void> = Promise.resolve();
-const JIKAN_MIN_INTERVAL_MS = 360;
+class TokenBucketRateLimiter {
+  private capacity: number;
+  private tokens: number;
+  private refillRatePerMs: number;
+  private lastRefill: number;
+  private queue: Array<() => void> = [];
+
+  constructor(capacity: number = 3, tokensPerSecond: number = 3) {
+    this.capacity = capacity;
+    this.tokens = capacity;
+    this.refillRatePerMs = tokensPerSecond / 1000;
+    this.lastRefill = Date.now();
+  }
+
+  private refill(): void {
+    const now = Date.now();
+    const elapsed = Math.max(0, now - this.lastRefill);
+    this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.refillRatePerMs);
+    this.lastRefill = now;
+  }
+
+  async acquire(): Promise<void> {
+    this.refill();
+    if (this.tokens >= 1) {
+      this.tokens -= 1;
+      return;
+    }
+
+    return new Promise<void>((resolve) => {
+      this.queue.push(resolve);
+      this.scheduleDrain();
+    });
+  }
+
+  private scheduleDrain(): void {
+    if (this.queue.length === 0) return;
+    this.refill();
+    while (this.queue.length > 0 && this.tokens >= 1) {
+      this.tokens -= 1;
+      const resolve = this.queue.shift();
+      if (resolve) resolve();
+    }
+    if (this.queue.length > 0) {
+      const tokensNeeded = 1 - this.tokens;
+      const delayMs = Math.max(25, Math.ceil(tokensNeeded / this.refillRatePerMs));
+      setTimeout(() => this.scheduleDrain(), delayMs);
+    }
+  }
+}
+
+const _tokenBucket = new TokenBucketRateLimiter(3, 3);
 
 interface CacheEntry<T> {
   data: T;
@@ -316,7 +365,7 @@ interface CacheEntry<T> {
 const _memoryCache = new Map<string, CacheEntry<unknown>>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-function getCached<T>(key: string): T | undefined {
+export function getCached<T>(key: string): T | undefined {
   const entry = _memoryCache.get(key);
   if (!entry) return undefined;
   if (Date.now() > entry.expiresAt) {
@@ -326,12 +375,104 @@ function getCached<T>(key: string): T | undefined {
   return entry.data as T;
 }
 
-function setCached<T>(key: string, data: T): void {
+export function setCached<T>(key: string, data: T, ttlMs: number = CACHE_TTL_MS): void {
   if (_memoryCache.size > 800) {
     const oldestKey = _memoryCache.keys().next().value;
     if (oldestKey) _memoryCache.delete(oldestKey);
   }
-  _memoryCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+  _memoryCache.set(key, { data, expiresAt: Date.now() + ttlMs });
+}
+
+/** Mihon Smart Refresh Gate: Checks if a media title is finished airing/publishing */
+export function isMediaFinished(status?: string | null): boolean {
+  if (!status) return false;
+  const s = status.toLowerCase();
+  return (
+    s.includes("finished") ||
+    s.includes("complete") ||
+    s.includes("ended") ||
+    s.includes("cancelled")
+  );
+}
+
+// ─── Mihon ChapterRecognition / parseMediaNumber Engine ───
+
+export interface ParsedMediaNumber {
+  number: number;
+  isSpecial: boolean;
+  rawString: string;
+  formatted: string;
+}
+
+/**
+ * Ported from Mihon's ChapterRecognition.kt
+ * Normalizes episode/chapter strings (e.g., "Episode 12.5", "Ch. 104", "S2 Ep 1", "Special 01")
+ * Extracting numeric values, decimal specials, and formatting clean labels.
+ */
+export function parseMediaNumber(
+  input: string | number,
+  mediaType: MediaType = "anime"
+): ParsedMediaNumber {
+  if (typeof input === "number") {
+    const isSpecial = input % 1 !== 0;
+    const prefix = mediaType === "anime" ? "Ep" : "Ch";
+    return {
+      number: input,
+      isSpecial,
+      rawString: String(input),
+      formatted: `${prefix} ${input}`,
+    };
+  }
+
+  const str = String(input || "").trim();
+  const lower = str.toLowerCase();
+  const isExplicitSpecial =
+    lower.includes("special") ||
+    lower.includes("recap") ||
+    lower.includes("ova") ||
+    lower.includes("side story") ||
+    lower.includes("prologue") ||
+    lower.includes("extra") ||
+    lower.includes("omake");
+
+  const match = str.match(/(?:ep(?:isode)?\.?|ch(?:apter)?\.?|#|\bv\b|\bvol\b)?\s*(\d+(?:\.\d+)?)/i);
+  const num = match ? parseFloat(match[1]) : 0;
+  const isSpecial = isExplicitSpecial || num % 1 !== 0;
+  const prefix = mediaType === "anime" ? "Ep" : "Ch";
+
+  return {
+    number: num,
+    isSpecial,
+    rawString: str,
+    formatted: num > 0 ? `${prefix} ${num}` : str || `${prefix} 1`,
+  };
+}
+
+/**
+ * Toggle formatting between Season-Relative ("S2 Ep 1") and Absolute ("Ep 26") numbering
+ */
+export function formatMediaNumberDisplay({
+  mediaType = "anime",
+  seasonNumber = 1,
+  number,
+  cumulativeOffset = 0,
+  mode = "relative",
+}: {
+  mediaType?: MediaType;
+  seasonNumber?: number;
+  number: number;
+  cumulativeOffset?: number;
+  mode?: "relative" | "absolute";
+}): string {
+  const prefix = mediaType === "anime" ? "Ep" : "Ch";
+  if (mode === "absolute" && cumulativeOffset > 0) {
+    const absoluteNum = cumulativeOffset + number;
+    return `${prefix} ${absoluteNum}`;
+  }
+  if (mediaType === "anime" && seasonNumber > 1) {
+    return `S${seasonNumber} ${prefix} ${number}`;
+  }
+  return `${prefix} ${number}`;
 }
 
 export async function jikanFetch(url: string | URL, init?: RequestInit): Promise<Response> {
@@ -339,13 +480,7 @@ export async function jikanFetch(url: string | URL, init?: RequestInit): Promise
   const maxRetries = 3;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const previousTail = _jikanQueueTail;
-    let release!: () => void;
-    _jikanQueueTail = new Promise<void>((r) => {
-      release = r;
-    });
-
-    await previousTail;
+    await _tokenBucket.acquire();
 
     try {
       const response = await fetch(urlStr, {
@@ -356,19 +491,30 @@ export async function jikanFetch(url: string | URL, init?: RequestInit): Promise
         },
       });
 
-      if (response.status === 429 || response.status === 502 || response.status === 503 || response.status === 504) {
+      if (
+        response.status === 429 ||
+        response.status === 502 ||
+        response.status === 503 ||
+        response.status === 504
+      ) {
         if (attempt < maxRetries) {
           const retryHeader = response.headers.get("Retry-After");
           const retrySec = retryHeader ? parseFloat(retryHeader) : NaN;
-          const waitMs = !Number.isNaN(retrySec) ? Math.max(retrySec * 1000, 1000) : 1200 * (attempt + 1);
+          const waitMs = !Number.isNaN(retrySec)
+            ? Math.max(retrySec * 1000, 1000)
+            : 1000 * Math.pow(2, attempt);
           await new Promise((resolve) => setTimeout(resolve, waitMs));
           continue;
         }
       }
 
       return response;
-    } finally {
-      setTimeout(() => release(), JIKAN_MIN_INTERVAL_MS);
+    } catch (err) {
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+        continue;
+      }
+      throw err;
     }
   }
 
@@ -406,8 +552,21 @@ export interface EpisodesResult {
   };
 }
 
-export async function getAnimeEpisodes(id: number, page: number = 1): Promise<EpisodesResult> {
+export async function getAnimeEpisodes(
+  id: number,
+  page: number = 1,
+  options?: { status?: string; forceRefresh?: boolean }
+): Promise<EpisodesResult> {
   const url = `${JIKAN_BASE}/anime/${id}/episodes?page=${Math.max(1, page)}`;
+
+  // Mihon Smart Refresh Gate: If finished and cached, skip network fetch
+  if (!options?.forceRefresh && isMediaFinished(options?.status)) {
+    const cached = getCached<EpisodesResult>(url);
+    if (cached) {
+      return cached;
+    }
+  }
+
   const data = await getJson<{
     data?: Array<{
       mal_id: number;
@@ -439,13 +598,20 @@ export async function getAnimeEpisodes(id: number, page: number = 1): Promise<Ep
     forum_url: ep.forum_url ?? null,
   }));
 
-  return {
+  const result: EpisodesResult = {
     episodes,
     pagination: {
       last_visible_page: data?.pagination?.last_visible_page ?? 1,
       has_next_page: Boolean(data?.pagination?.has_next_page),
     },
   };
+
+  // If media is finished, cache with longer TTL (24 hours)
+  if (isMediaFinished(options?.status)) {
+    setCached(url, result, 24 * 60 * 60 * 1000);
+  }
+
+  return result;
 }
 
 export async function getMangaPictures(id: number): Promise<string[]> {
@@ -463,7 +629,20 @@ export async function getMangaPictures(id: number): Promise<string[]> {
   }
 }
 
-export async function getMangaVolumes(id: number): Promise<MangaVolumeData> {
+export async function getMangaVolumes(
+  id: number,
+  options?: { status?: string; forceRefresh?: boolean }
+): Promise<MangaVolumeData> {
+  const cacheKey = `manga_volumes_${id}`;
+
+  // Mihon Smart Refresh Gate: If finished and cached, skip network fetch
+  if (!options?.forceRefresh && isMediaFinished(options?.status)) {
+    const cached = getCached<MangaVolumeData>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+  }
+
   const [detail, pictures] = await Promise.all([
     getFullDetail("manga", id),
     getMangaPictures(id),
@@ -504,13 +683,21 @@ export async function getMangaVolumes(id: number): Promise<MangaVolumeData> {
     });
   }
 
-  return {
+  const result: MangaVolumeData = {
     totalVolumes,
     totalChapters,
     status: detail.status || "Unknown",
     volumes,
     pictures,
   };
+
+  if (isMediaFinished(detail.status || options?.status)) {
+    setCached(cacheKey, result, 24 * 60 * 60 * 1000);
+  } else {
+    setCached(cacheKey, result);
+  }
+
+  return result;
 }
 
 export async function getRelated(type: MediaType, id: number): Promise<JikanRelation[]> {

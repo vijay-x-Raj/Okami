@@ -107,12 +107,18 @@ export async function fetchDetail(type: MediaType, id: number): Promise<OkamiMed
 export async function fetchEpisodes(
   id: number,
   page: number = 1,
-  total?: number
+  options?: { total?: number; status?: string; forceRefresh?: boolean } | number
 ): Promise<FetchEpisodesResponse> {
   const url = new URL("/api/jikan/episodes", window.location.origin);
   url.searchParams.set("id", String(id));
   url.searchParams.set("page", String(page));
-  if (total) url.searchParams.set("total", String(total));
+  if (typeof options === "number") {
+    if (options > 0) url.searchParams.set("total", String(options));
+  } else if (options) {
+    if (options.total) url.searchParams.set("total", String(options.total));
+    if (options.status) url.searchParams.set("status", options.status);
+    if (options.forceRefresh) url.searchParams.set("forceRefresh", "true");
+  }
 
   const data = await getJson<{
     episodes: JikanEpisode[];
@@ -125,9 +131,14 @@ export async function fetchEpisodes(
   };
 }
 
-export async function fetchVolumes(id: number): Promise<MangaVolumeData> {
+export async function fetchVolumes(
+  id: number,
+  options?: { status?: string; forceRefresh?: boolean }
+): Promise<MangaVolumeData> {
   const url = new URL("/api/jikan/volumes", window.location.origin);
   url.searchParams.set("id", String(id));
+  if (options?.status) url.searchParams.set("status", options.status);
+  if (options?.forceRefresh) url.searchParams.set("forceRefresh", "true");
   return getJson<MangaVolumeData>(url);
 }
 

@@ -3,6 +3,8 @@ import { getMangaVolumes } from "@/app/lib/jikan";
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const id = Number(url.searchParams.get("id"));
+  const status = url.searchParams.get("status") || undefined;
+  const forceRefresh = url.searchParams.get("forceRefresh") === "true";
 
   if (!Number.isFinite(id) || id <= 0) {
     return Response.json(
@@ -12,7 +14,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const data = await getMangaVolumes(id);
+    const data = await getMangaVolumes(id, { status, forceRefresh });
     return Response.json(
       {
         totalVolumes: data.totalVolumes,

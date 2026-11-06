@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { JikanEpisode, JikanRelation, MangaVolumeItem, MediaType, OkamiMedia } from "./lib/jikan";
+import { parseMediaNumber, formatMediaNumberDisplay } from "./lib/jikan";
 import { fetchDetail, fetchEpisodes, fetchRelated, fetchSeason, fetchTop, fetchVolumes, searchMedia } from "./lib/api";
 import {
   addEntry,
@@ -24,6 +25,20 @@ import {
   findFranchiseByMalId,
   getFranchiseDisplayInfo,
   type UnifiedFranchiseEntry,
+  TrackManager,
+  type HistoryEntry,
+  type CustomCategory,
+  loadHistory,
+  clearHistory,
+  formatRelativeTime,
+  loadCustomCategories,
+  saveCustomCategories,
+  addCustomCategory,
+  removeCustomCategory,
+  assignFranchiseCategory,
+  unassignFranchiseCategory,
+  importFromMAL,
+  importFromAniList,
 } from "./lib/storage";
 
 const navItems = [
@@ -98,7 +113,15 @@ const statusOptions: Array<{ value: OkamiStatus; label: string; className: strin
   { value: "plan_to_watch", label: "Plan to Watch / Read", className: "plan" },
 ];
 
-const sortOptions = ["Date Added", "Score", "Title A–Z", "Year"] as const;
+const sortOptions = [
+  "Last Updated",
+  "Title A–Z",
+  "Score",
+  "Total Progress",
+  "Unwatched / Unread",
+  "Date Added",
+  "Year",
+] as const;
 
 const _GENRE_MAP: Record<string, number> = {
   action: 1,
@@ -189,6 +212,8 @@ function formatScore(score: number | null | undefined) {
 }
 
 // ─── Unified Library Item Representation ───
+export type TriState = "neutral" | "include" | "exclude";
+
 interface UnifiedLibraryItem {
   id: string; // franchiseId or legacy key
   rootMalId: number;
@@ -209,6 +234,10 @@ interface UnifiedLibraryItem {
   is_favourite: boolean;
   franchise?: UnifiedFranchiseEntry;
   legacyEntry?: OkamiEntry;
+  unwatchedCount: number;
+  unreadCount: number;
+  categories: string[];
+  updatedAt: number;
 }
 
 function ScoreCell({
@@ -411,7 +440,30 @@ function EntryMenu({
   );
 }
 
-// ─── 1. Unified Library View ───
+// ─── 1. Unified Library View with Mihon Optimizations ───
+
+function TriStateFilterChip({
+  label,
+  state = "neutral",
+  onClick,
+}: {
+  label: string;
+  state?: TriState;
+  onClick: () => void;
+}) {
+  const icon = state === "include" ? "✓ " : state === "exclude" ? "✕ " : "";
+  return (
+    <button
+      type="button"
+      className={`tri-state-chip state-${state}`}
+      onClick={onClick}
+      title={`${label}: ${state} (Click to cycle)`}
+    >
+      <span className="tri-state-indicator">{icon}</span>
+      <span>{label}</span>
+    </button>
+  );
+}
 
 function LibraryView({
   entries,
@@ -456,6 +508,32 @@ function LibraryView({
   onClearFilters: () => void;
   onOpenTracker: (item: UnifiedLibraryItem) => void;
 }) {
+  // Mihon state filters: tri-state chips
+  const [statusTriState, setStatusTriState] = useState<Record<string, TriState>>({});
+  const [typeTriState, setTypeTriState] = useState<Record<string, TriState>>({});
+  const [unwatchedTriState, setUnwatchedTriState] = useState<TriState>("neutral");
+  const [numberingMode, setNumberingMode] = useState<"relative" | "absolute">("relative");
+  const [activeCategory, setActiveCategory] = useState<string>("all");
+  const [categories, setCategories] = useState<CustomCategory[]>(() => loadCustomCategories());
+  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setCategories(loadCustomCategories());
+      setHistory(loadHistory());
+    };
+    window.addEventListener("okami-storage-update", handleUpdate);
+    return () => window.removeEventListener("okami-storage-update", handleUpdate);
+  }, []);
+
+  const stats = useMemo(() => TrackManager.calculateStats(franchises), [franchises]);
+
+  const cycleTriState = (current?: TriState): TriState => {
+    if (!current || current === "neutral") return "include";
+    if (current === "include") return "exclude";
+    return "neutral";
+  };
+
   // Unify multi-season franchises and legacy entries into single cohesive entries
   const unifiedItems = useMemo<UnifiedLibraryItem[]>(() => {
     const items: UnifiedLibraryItem[] = [];
@@ -489,18 +567,26 @@ function LibraryView({
         user_score: matchingEntry?.user_score ?? null,
         status: displayInfo.overallStatus,
         progressLabel: displayInfo.progressLabel || "--",
-        progressNum: matchingEntry?.progress || 0,
-        totalNum: matchingEntry?.total ?? null,
+        progressNum: matchingEntry?.progress || displayInfo.totalProgress || 0,
+        totalNum: matchingEntry?.total ?? displayInfo.totalAvailable ?? null,
         date_added: new Date(franchise.addedAt || franchise.updatedAt).toISOString(),
         is_favourite: Boolean(franchise.isFavorite || matchingEntry?.is_favourite),
         franchise,
         legacyEntry: matchingEntry,
+        unwatchedCount: displayInfo.unwatchedCount,
+        unreadCount: displayInfo.unreadCount,
+        categories: displayInfo.categories,
+        updatedAt: franchise.updatedAt || franchise.addedAt || 0,
       });
     }
 
     // Process any legacy entries not yet in franchises
     for (const entry of entries) {
       if (seenRoots.has(entry.id)) continue;
+      const total = entry.total || 0;
+      const progress = entry.progress || 0;
+      const diff = total > 0 ? Math.max(0, total - progress) : 0;
+
       items.push({
         id: `legacy_${entry.type}_${entry.id}`,
         rootMalId: entry.id,
@@ -514,12 +600,19 @@ function LibraryView({
         official_score: entry.official_score,
         user_score: entry.user_score,
         status: entry.status,
-        progressLabel: entry.type === "manga" ? `Ch ${entry.progress}/${entry.total ?? "?"}` : `Ep ${entry.progress}/${entry.total ?? "?"}`,
+        progressLabel:
+          entry.type === "manga"
+            ? `Ch ${entry.progress}/${entry.total ?? "?"}`
+            : `Ep ${entry.progress}/${entry.total ?? "?"}`,
         progressNum: entry.progress,
         totalNum: entry.total,
         date_added: entry.date_added,
         is_favourite: entry.is_favourite,
         legacyEntry: entry,
+        unwatchedCount: entry.type === "anime" ? diff : 0,
+        unreadCount: entry.type === "manga" ? diff : 0,
+        categories: [],
+        updatedAt: new Date(entry.date_added).getTime(),
       });
     }
 
@@ -529,7 +622,36 @@ function LibraryView({
   const displayedItems = useMemo(() => {
     let result = [...unifiedItems];
 
-    if (activeType !== "all") {
+    // 1. Custom Category filter
+    if (activeCategory !== "all") {
+      result = result.filter((item) =>
+        item.categories?.includes(activeCategory)
+      );
+    }
+
+    // 2. Type Filter (Tri-State support)
+    const hasTypeInclude = Object.values(typeTriState).some((s) => s === "include");
+    const hasTypeExclude = Object.values(typeTriState).some((s) => s === "exclude");
+    if (hasTypeInclude || hasTypeExclude) {
+      result = result.filter((item) => {
+        const itemType = item.type;
+        const isFilm =
+          (item.format?.toLowerCase() || "").includes("film") ||
+          (item.format?.toLowerCase() || "").includes("movie");
+
+        if (typeTriState["anime"] === "exclude" && (itemType === "anime" || itemType === "both")) return false;
+        if (typeTriState["manga"] === "exclude" && (itemType === "manga" || itemType === "both")) return false;
+        if (typeTriState["films"] === "exclude" && isFilm) return false;
+
+        if (hasTypeInclude) {
+          if (typeTriState["anime"] === "include" && (itemType === "anime" || itemType === "both")) return true;
+          if (typeTriState["manga"] === "include" && (itemType === "manga" || itemType === "both")) return true;
+          if (typeTriState["films"] === "include" && isFilm) return true;
+          return false;
+        }
+        return true;
+      });
+    } else if (activeType !== "all") {
       if (activeType === "films") {
         result = result.filter((item) => {
           const fmt = item.format?.toLowerCase?.() ?? "";
@@ -540,13 +662,25 @@ function LibraryView({
       }
     }
 
-    if (activeGenre) {
-      result = result.filter((item) =>
-        item.genres?.some((genre) => genre.toLowerCase() === activeGenre.toLowerCase())
-      );
-    }
+    // 3. Status Filter (Tri-State support)
+    const hasStatusInclude = Object.values(statusTriState).some((s) => s === "include");
+    const hasStatusExclude = Object.values(statusTriState).some((s) => s === "exclude");
+    if (hasStatusInclude || hasStatusExclude) {
+      result = result.filter((item) => {
+        const s = item.status;
+        const isFav = item.is_favourite;
 
-    if (activeStatus) {
+        if (statusTriState["favorites"] === "exclude" && isFav) return false;
+        if (statusTriState[s] === "exclude") return false;
+
+        if (hasStatusInclude) {
+          if (statusTriState["favorites"] === "include" && isFav) return true;
+          if (statusTriState[s] === "include") return true;
+          return false;
+        }
+        return true;
+      });
+    } else if (activeStatus) {
       if (activeStatus === "favorites") {
         result = result.filter((item) => item.is_favourite);
       } else {
@@ -554,8 +688,26 @@ function LibraryView({
       }
     }
 
+    // 4. Genre Filter
+    if (activeGenre) {
+      result = result.filter((item) =>
+        item.genres?.some((genre) => genre.toLowerCase() === activeGenre.toLowerCase())
+      );
+    }
+
+    // 5. Unwatched / Unread Filter (Tri-State)
+    if (unwatchedTriState === "include") {
+      result = result.filter((item) => item.unwatchedCount > 0 || item.unreadCount > 0);
+    } else if (unwatchedTriState === "exclude") {
+      result = result.filter((item) => item.unwatchedCount === 0 && item.unreadCount === 0);
+    }
+
+    // 6. Sorting
     const next = [...result];
     switch (sortBy) {
+      case "Last Updated":
+        next.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        break;
       case "Score":
         next.sort(
           (a, b) =>
@@ -566,14 +718,50 @@ function LibraryView({
       case "Title A–Z":
         next.sort((a, b) => a.title.localeCompare(b.title));
         break;
+      case "Total Progress":
+        next.sort((a, b) => {
+          const aRatio = a.totalNum && a.totalNum > 0 ? a.progressNum / a.totalNum : 0;
+          const bRatio = b.totalNum && b.totalNum > 0 ? b.progressNum / b.totalNum : 0;
+          return bRatio - aRatio;
+        });
+        break;
+      case "Unwatched / Unread":
+        next.sort(
+          (a, b) =>
+            b.unwatchedCount + b.unreadCount - (a.unwatchedCount + a.unreadCount)
+        );
+        break;
       case "Year":
         next.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
         break;
       default:
-        next.sort((a, b) => new Date(b.date_added).getTime() - new Date(a.date_added).getTime());
+        next.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     }
     return next;
-  }, [unifiedItems, activeType, activeGenre, activeStatus, sortBy]);
+  }, [
+    unifiedItems,
+    activeCategory,
+    typeTriState,
+    statusTriState,
+    unwatchedTriState,
+    activeType,
+    activeGenre,
+    activeStatus,
+    sortBy,
+  ]);
+
+  const hasAnyTriFilter =
+    Object.values(statusTriState).some((s) => s !== "neutral") ||
+    Object.values(typeTriState).some((s) => s !== "neutral") ||
+    unwatchedTriState !== "neutral";
+
+  const clearAllTriFilters = () => {
+    setStatusTriState({});
+    setTypeTriState({});
+    setUnwatchedTriState("neutral");
+    setActiveCategory("all");
+    onClearFilters();
+  };
 
   return (
     <>
@@ -582,98 +770,212 @@ function LibraryView({
           <span className="page-title-kanji">本棚</span>
           <span className="page-title-slash">/</span>
           <span className="page-title">LIBRARY</span>
-          <div className="view-toggle">
+
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
+            {/* Numbering mode toggle */}
             <button
-              className={`view-btn ${activeView === "grid" ? "active" : ""}`}
               type="button"
-              onClick={() => setActiveView("grid")}
-              aria-pressed={activeView === "grid"}
-              aria-label="Grid view"
+              className={`pill ${numberingMode === "absolute" ? "active" : ""}`}
+              onClick={() => setNumberingMode((m) => (m === "relative" ? "absolute" : "relative"))}
+              title="Toggle between Season-Relative (S2 Ep 1) and Absolute (Ep 26) numbering"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="3" y="3" width="7" height="7" />
-                <rect x="14" y="3" width="7" height="7" />
-                <rect x="3" y="14" width="7" height="7" />
-                <rect x="14" y="14" width="7" height="7" />
-              </svg>
+              Mode: {numberingMode === "relative" ? "Relative" : "Absolute"}
             </button>
-            <button
-              className={`view-btn ${activeView === "list" ? "active" : ""}`}
-              type="button"
-              onClick={() => setActiveView("list")}
-              aria-pressed={activeView === "list"}
-              aria-label="List view"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="3" y1="6" x2="21" y2="6" />
-                <line x1="3" y1="12" x2="21" y2="12" />
-                <line x1="3" y1="18" x2="21" y2="18" />
-              </svg>
-            </button>
+
+            <div className="view-toggle">
+              <button
+                className={`view-btn ${activeView === "grid" ? "active" : ""}`}
+                type="button"
+                onClick={() => setActiveView("grid")}
+                aria-pressed={activeView === "grid"}
+                aria-label="Grid view"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="3" width="7" height="7" />
+                  <rect x="14" y="3" width="7" height="7" />
+                  <rect x="3" y="14" width="7" height="7" />
+                  <rect x="14" y="14" width="7" height="7" />
+                </svg>
+              </button>
+              <button
+                className={`view-btn ${activeView === "list" ? "active" : ""}`}
+                type="button"
+                onClick={() => setActiveView("list")}
+                aria-pressed={activeView === "list"}
+                aria-label="List view"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
-        <div className="page-sub">Your personal anime & manga franchise vault</div>
+        <div className="page-sub">Your personal anime &amp; manga franchise vault</div>
       </div>
 
-      <div className="filter-bar">
-        <div className="filter-section">
-          <span className="filter-label">Type</span>
-          {libraryFilters.type.map((item) => {
-            const typeClass =
-              item.value === "anime"
-                ? "type-anime"
-                : item.value === "manga"
-                  ? "type-manga"
-                  : item.value === "films"
-                    ? "type-film"
-                    : "";
-            return (
-              <button
-                key={item.value}
-                type="button"
-                className={`pill ${typeClass ? `pill-type ${typeClass}` : ""} ${activeType === item.value ? "active" : ""}`}
-                onClick={() => setActiveType(activeType === item.value ? "all" : (item.value as "all" | "anime" | "manga" | "films"))}
-              >
-                {item.label}
-              </button>
-            );
-          })}
+      {/* ── Mihon-Inspired Statistics Summary Cards ── */}
+      <div className="stats-summary-grid">
+        <div className="stats-summary-card">
+          <span className="stats-card-label">Episodes Watched</span>
+          <span className="stats-card-value">{stats.totalEpisodes.toLocaleString()}</span>
+          <span className="stats-card-sub">≈ {stats.daysWatched} Days Total</span>
         </div>
+        <div className="stats-summary-card">
+          <span className="stats-card-label">Chapters Read</span>
+          <span className="stats-card-value">{stats.totalChapters.toLocaleString()}</span>
+          <span className="stats-card-sub">{stats.totalVolumes} Volumes Tracked</span>
+        </div>
+        <div className="stats-summary-card">
+          <span className="stats-card-label">Mean Rating</span>
+          <span className="stats-card-value">★ {stats.meanScore > 0 ? stats.meanScore.toFixed(1) : "--"}</span>
+          <span className="stats-card-sub">Across All Tracks</span>
+        </div>
+        <div className="stats-summary-card">
+          <span className="stats-card-label">Completed Titles</span>
+          <span className="stats-card-value">{stats.completedAnime + stats.completedManga}</span>
+          <span className="stats-card-sub">{stats.completedAnime} Anime • {stats.completedManga} Manga</span>
+        </div>
+      </div>
 
-        <div className="filter-divider" />
-
-        <div className="filter-section">
-          <span className="filter-label">Genre</span>
-          {libraryFilters.genre.map((item) => (
+      {/* ── Recently Watched / Read Activity Shelf ── */}
+      {history.length > 0 && (
+        <section className="recent-activity-section">
+          <div className="recent-activity-header">
+            <div className="recent-activity-title">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+              <span>Recent Activity / 最近の履歴</span>
+            </div>
             <button
-              key={item.value}
               type="button"
-              className={`pill ${activeGenre === item.value ? "active" : ""}`}
-              onClick={() => setActiveGenre(activeGenre === item.value ? "" : item.value)}
+              className="empty-link"
+              style={{ fontSize: "9px", cursor: "pointer", background: "none", border: "none" }}
+              onClick={clearHistory}
             >
-              {item.label}
+              Clear History
             </button>
-          ))}
-        </div>
+          </div>
+          <div className="recent-activity-strip">
+            {history.slice(0, 8).map((h) => (
+              <div
+                key={h.id}
+                className="recent-activity-card"
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  const targetItem = unifiedItems.find(
+                    (it) => it.id === h.franchiseId || it.rootMalId === h.malId
+                  );
+                  if (targetItem) onOpenTracker(targetItem);
+                }}
+              >
+                {h.coverImage && (
+                  <img className="activity-card-thumb" src={h.coverImage} alt={h.title} />
+                )}
+                <div className="activity-card-info">
+                  <div className="activity-card-title">{h.title}</div>
+                  <div className="activity-card-meta">
+                    <span>{h.mediaType === "anime" ? `Episode ${h.number}` : `Chapter ${h.number}`}</span>
+                  </div>
+                  <div className="activity-card-time">{formatRelativeTime(h.timestamp)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
-        <div className="filter-divider" />
+      {/* ── Custom Categories Tab Bar ── */}
+      <div className="category-tabs-bar">
+        {categories.map((cat) => (
+          <button
+            key={cat.id}
+            type="button"
+            className={`category-tab-btn ${activeCategory === cat.id ? "active" : ""}`}
+            onClick={() => setActiveCategory(cat.id)}
+          >
+            {cat.name}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="category-add-btn"
+          onClick={() => {
+            const name = prompt("Enter new category name:");
+            if (name && name.trim()) {
+              addCustomCategory(name.trim());
+              setCategories(loadCustomCategories());
+            }
+          }}
+        >
+          + Add Category
+        </button>
+      </div>
 
-        <div className="filter-section">
+      {/* ── Mihon Tri-State Filter Bar ── */}
+      <div className="filter-bar" style={{ flexWrap: "wrap", gap: "10px", padding: "10px 14px" }}>
+        {/* Status Tri-State */}
+        <div className="filter-section" style={{ flexWrap: "wrap", gap: "6px" }}>
           <span className="filter-label">Status</span>
           {libraryFilters.status.map((item) => (
-            <button
+            <TriStateFilterChip
               key={item.value}
-              type="button"
-              className={`pill ${activeStatus === item.value ? "active" : ""}`}
-              onClick={() =>
-                setActiveStatus(activeStatus === item.value ? "" : (item.value as OkamiStatus | "favorites"))
-              }
-            >
-              {item.label}
-            </button>
+              label={item.label}
+              state={statusTriState[item.value] || "neutral"}
+              onClick={() => {
+                setStatusTriState((prev) => ({
+                  ...prev,
+                  [item.value]: cycleTriState(prev[item.value]),
+                }));
+              }}
+            />
           ))}
         </div>
 
+        <div className="filter-divider" />
+
+        {/* Media Type Tri-State */}
+        <div className="filter-section" style={{ gap: "6px" }}>
+          <span className="filter-label">Type</span>
+          {[
+            { label: "Anime", value: "anime" },
+            { label: "Manga", value: "manga" },
+            { label: "Films", value: "films" },
+          ].map((item) => (
+            <TriStateFilterChip
+              key={item.value}
+              label={item.label}
+              state={typeTriState[item.value] || "neutral"}
+              onClick={() => {
+                setTypeTriState((prev) => ({
+                  ...prev,
+                  [item.value]: cycleTriState(prev[item.value]),
+                }));
+              }}
+            />
+          ))}
+        </div>
+
+        <div className="filter-divider" />
+
+        {/* Unwatched Filter Chip */}
+        <div className="filter-section">
+          <span className="filter-label">Unplayed</span>
+          <TriStateFilterChip
+            label="Unwatched / Unread"
+            state={unwatchedTriState}
+            onClick={() => setUnwatchedTriState((prev) => cycleTriState(prev))}
+          />
+        </div>
+
+        <div className="filter-divider" />
+
+        {/* Sort Section */}
         <div className="sort-section">
           <span className="sort-label">Sort</span>
           <select
@@ -687,6 +989,17 @@ function LibraryView({
             ))}
           </select>
         </div>
+
+        {hasAnyTriFilter && (
+          <button
+            type="button"
+            className="clear-all-btn"
+            style={{ marginLeft: "auto" }}
+            onClick={clearAllTriFilters}
+          >
+            Reset Filters ✕
+          </button>
+        )}
       </div>
 
       <div className="count-row" suppressHydrationWarning>
@@ -710,7 +1023,7 @@ function LibraryView({
         <div className="empty-state">
           <div className="empty-title">No entries match this filter</div>
           <div className="empty-sub">Try adjusting your filters or search keywords.</div>
-          <button className="empty-link" type="button" onClick={onClearFilters}>
+          <button className="empty-link" type="button" onClick={clearAllTriFilters}>
             Clear Filters
           </button>
         </div>
@@ -719,6 +1032,16 @@ function LibraryView({
           {displayedItems.map((item) => {
             const category = entryCategory(item.type, item.format);
             const isManga = item.type === "manga";
+
+            // Format progress label with relative / absolute toggle
+            const formattedProgress =
+              numberingMode === "absolute" && item.franchise && !isManga
+                ? formatMediaNumberDisplay({
+                    mediaType: "anime",
+                    number: item.progressNum,
+                    mode: "absolute",
+                  })
+                : item.progressLabel;
 
             return (
               <article className="card" key={item.id}>
@@ -735,8 +1058,20 @@ function LibraryView({
                   }}
                 >
                   <img className="card-img" src={item.cover} alt={item.title} />
-                  <div className="franchise-pointer-badge">{item.progressLabel}</div>
+                  <div className="franchise-pointer-badge">{formattedProgress}</div>
                   <div className="card-img-overlay" />
+
+                  {/* Mihon Unwatched / Unread Badge Pill */}
+                  {item.unwatchedCount > 0 ? (
+                    <div className="unwatched-badge">
+                      {item.unwatchedCount} {isManga ? "Ch" : "Ep"} left
+                    </div>
+                  ) : item.unreadCount > 0 ? (
+                    <div className="unwatched-badge">
+                      {item.unreadCount} Ch left
+                    </div>
+                  ) : null}
+
                   <div className="card-actions">
                     <button
                       className="card-action-btn quick-plus"
@@ -823,6 +1158,7 @@ function LibraryView({
             <span>Official</span>
             <span>Status</span>
             <span>Progress</span>
+            <span>Unplayed</span>
             <span>Quick +1</span>
             <span>Date Added</span>
             <span>⋯</span>
@@ -830,6 +1166,7 @@ function LibraryView({
           {displayedItems.map((item, index) => {
             const category = entryCategory(item.type, item.format);
             const isManga = item.type === "manga";
+            const unplayedCount = item.unwatchedCount || item.unreadCount || 0;
 
             return (
               <div
@@ -854,6 +1191,9 @@ function LibraryView({
                 <span className="mono">{formatScore(item.official_score)}</span>
                 <span className={`status-chip ${statusClass(item.status)}`}>{statusLabel(item.status)}</span>
                 <span className="mono">{item.progressLabel}</span>
+                <span className="mono" style={{ color: unplayedCount > 0 ? "var(--accent)" : "var(--text-3)" }}>
+                  {unplayedCount > 0 ? `+${unplayedCount}` : "0"}
+                </span>
                 <div>
                   <button
                     className="card-action-btn quick-plus"
@@ -2137,12 +2477,16 @@ function ProfileView({
   favourites,
   onExport,
   onImport,
+  onImportMAL,
+  onImportAniList,
   onClear,
 }: {
   profileStats: Array<{ label: string; value: string }>;
   favourites: OkamiEntry[];
   onExport: () => void;
   onImport: () => void;
+  onImportMAL?: () => void;
+  onImportAniList?: () => void;
   onClear: () => void;
 }) {
   return (
@@ -2194,15 +2538,25 @@ function ProfileView({
 
         <div className="profile-card settings-card">
           <div className="section-header">
-            <span className="section-title">Vault Data Management</span>
+            <span className="section-title">Vault Data Management (Mihon Port)</span>
           </div>
           <div className="settings-list">
             <button className="settings-btn" type="button" onClick={onExport}>
-              📥 Export Vault Backup (JSON)
+              📥 Export Vault Backup (JSON v3)
             </button>
             <button className="settings-btn" type="button" onClick={onImport}>
               📤 Import Vault Backup (JSON)
             </button>
+            {onImportMAL && (
+              <button className="settings-btn" type="button" onClick={onImportMAL}>
+                📋 Import from MyAnimeList (XML / JSON)
+              </button>
+            )}
+            {onImportAniList && (
+              <button className="settings-btn" type="button" onClick={onImportAniList}>
+                🌸 Import from AniList (JSON)
+              </button>
+            )}
             <button className="settings-btn danger" type="button" onClick={onClear}>
               ⚠️ Clear All Vault Data
             </button>
@@ -2727,7 +3081,7 @@ export default function Home() {
   const [activeType, setActiveType] = useState<"all" | "anime" | "manga" | "films">("all");
   const [activeGenre, setActiveGenre] = useState("");
   const [activeStatus, setActiveStatus] = useState<OkamiStatus | "favorites" | "">("");
-  const [sortBy, setSortBy] = useState<(typeof sortOptions)[number]>("Date Added");
+  const [sortBy, setSortBy] = useState<(typeof sortOptions)[number]>("Last Updated");
 
   const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
   const [franchises, setFranchises] = useState<Record<string, UnifiedFranchiseEntry>>(() => {
@@ -3003,6 +3357,54 @@ export default function Home() {
     input.click();
   };
 
+  const handleImportMAL = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".xml,.json";
+    input.onchange = async (event) => {
+      const file = (event.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      try {
+        const res = importFromMAL(text);
+        if (res.importedCount > 0) {
+          setEntries(loadEntries());
+          setFranchises(loadFranchiseEntries());
+          alert(`Successfully imported ${res.importedCount} titles from MyAnimeList!`);
+        } else {
+          alert(`No valid titles could be imported. ${res.errors.join("; ")}`);
+        }
+      } catch (err) {
+        alert(`Failed to import MAL backup: ${err}`);
+      }
+    };
+    input.click();
+  };
+
+  const handleImportAniList = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async (event) => {
+      const file = (event.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      try {
+        const res = importFromAniList(text);
+        if (res.importedCount > 0) {
+          setEntries(loadEntries());
+          setFranchises(loadFranchiseEntries());
+          alert(`Successfully imported ${res.importedCount} titles from AniList!`);
+        } else {
+          alert(`No valid titles could be imported. ${res.errors.join("; ")}`);
+        }
+      } catch (err) {
+        alert(`Failed to import AniList backup: ${err}`);
+      }
+    };
+    input.click();
+  };
+
   const handleClear = () => {
     if (confirm("This will permanently delete all your tracked entries and franchise progress. Are you sure?")) {
       if (confirm("Second confirmation: This action is permanent and cannot be undone.")) {
@@ -3136,6 +3538,8 @@ export default function Home() {
                   favourites={favourites}
                   onExport={handleExport}
                   onImport={handleImport}
+                  onImportMAL={handleImportMAL}
+                  onImportAniList={handleImportAniList}
                   onClear={handleClear}
                 />
               ) : null}

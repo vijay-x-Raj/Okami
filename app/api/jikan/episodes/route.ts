@@ -5,6 +5,8 @@ export async function GET(request: Request) {
   const id = Number(url.searchParams.get("id"));
   const page = Math.max(1, Number(url.searchParams.get("page") || 1));
   const expectedTotal = Number(url.searchParams.get("total") || 0);
+  const status = url.searchParams.get("status") || undefined;
+  const forceRefresh = url.searchParams.get("forceRefresh") === "true";
 
   if (!Number.isFinite(id) || id <= 0) {
     return Response.json(
@@ -14,7 +16,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const result = await getAnimeEpisodes(id, page);
+    const result = await getAnimeEpisodes(id, page, { status, forceRefresh });
 
     // If Jikan returns empty episodes on page 1, check if detail has known episode count and synthesize
     if (result.episodes.length === 0 && page === 1) {

@@ -7,11 +7,13 @@ function getNow(): number {
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import type {
-  FranchiseGraph,
-  JikanCharacter,
-  JikanEpisode,
-  OkamiMedia,
+import {
+  type FranchiseGraph,
+  type JikanCharacter,
+  type JikanEpisode,
+  type OkamiMedia,
+  parseMediaNumber,
+  formatMediaNumberDisplay,
 } from "@/app/lib/jikan";
 import {
   fetchCharacters,
@@ -93,6 +95,7 @@ export default function AnimeDetailPage() {
     loadFranchiseEntries()
   );
   const [activeInfoTab, setActiveInfoTab] = useState<"overview" | "characters" | "seasons">("overview");
+  const [numberingMode, setNumberingMode] = useState<"relative" | "absolute">("relative");
 
   // Keep selectedSeasonId synchronized to animeId on initial navigation
   useEffect(() => {
@@ -348,10 +351,11 @@ export default function AnimeDetailPage() {
     setLoadingEpisodes(true);
 
     try {
-      const [newDetail, epData] = await Promise.all([
-        fetchDetail("anime", seasonMalId),
-        fetchEpisodes(seasonMalId, 1),
-      ]);
+      const newDetail = await fetchDetail("anime", seasonMalId);
+      const epData = await fetchEpisodes(seasonMalId, 1, {
+        total: newDetail?.total ?? 0,
+        status: newDetail?.status,
+      });
       setMedia(newDetail);
       setEpisodes(epData.episodes);
       setPagination(epData.pagination);
@@ -368,7 +372,10 @@ export default function AnimeDetailPage() {
     setLoadingEpisodes(true);
     setEpisodePage(newPage);
     try {
-      const epData = await fetchEpisodes(selectedSeasonId, newPage, media?.total ?? 0);
+      const epData = await fetchEpisodes(selectedSeasonId, newPage, {
+        total: media?.total ?? 0,
+        status: media?.status,
+      });
       setEpisodes(epData.episodes);
       setPagination(epData.pagination);
     } catch {
@@ -395,9 +402,12 @@ export default function AnimeDetailPage() {
 
     const load = async () => {
       try {
-        const [detail, epData, cast, graph] = await Promise.all([
-          fetchDetail("anime", animeId),
-          fetchEpisodes(animeId, 1),
+        const detail = await fetchDetail("anime", animeId);
+        const [epData, cast, graph] = await Promise.all([
+          fetchEpisodes(animeId, 1, {
+            total: detail?.total ?? 0,
+            status: detail?.status,
+          }),
           fetchCharacters(animeId, "anime").catch(() => []),
           fetchFranchiseGraph(animeId, "anime").catch(() => null),
         ]);
@@ -631,16 +641,35 @@ export default function AnimeDetailPage() {
               <div className="detail-section-title" style={{ margin: 0 }}>
                 Episode Tracker ({completedEpisodes.length} / {media?.total ?? (episodes.length > 0 ? episodes.length : "?")})
               </div>
-              {entry && episodes.length > 0 ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <button
-                  className="btn-text-link"
                   type="button"
-                  onClick={handleMarkSeasonComplete}
-                  title="Mark all episodes in this season as watched"
+                  className="btn-text-link"
+                  style={{
+                    fontSize: 11,
+                    padding: "3px 8px",
+                    borderRadius: 4,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: "var(--text-2)",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => setNumberingMode((prev) => (prev === "relative" ? "absolute" : "relative"))}
+                  title="Toggle between Season-Relative (S2 Ep 1) and Absolute (Ep 26) numbering"
                 >
-                  ✓ Mark Entire Season Completed
+                  {numberingMode === "relative" ? "Mode: S-Relative" : "Mode: Absolute"}
                 </button>
-              ) : null}
+                {entry && episodes.length > 0 ? (
+                  <button
+                    className="btn-text-link"
+                    type="button"
+                    onClick={handleMarkSeasonComplete}
+                    title="Mark all episodes in this season as watched"
+                  >
+                    ✓ Mark Season Completed
+                  </button>
+                ) : null}
+              </div>
             </div>
 
             {/* Season Selector Accordion / Tabs */}
@@ -695,6 +724,14 @@ export default function AnimeDetailPage() {
                   {episodes.map((episode) => {
                     const value = episode.mal_id;
                     const active = completedEpisodes.includes(value);
+                    const currentSeason = allSeasons.find((s) => s.malId === selectedSeasonId);
+                    const parsedEp = parseMediaNumber(episode.title || episode.mal_id, "anime");
+                    const epLabel = formatMediaNumberDisplay({
+                      mediaType: "anime",
+                      seasonNumber: currentSeason?.seasonNumber,
+                      number: parsedEp.number,
+                      mode: numberingMode,
+                    });
                     return (
                       <div
                         key={episode.mal_id}
@@ -714,7 +751,7 @@ export default function AnimeDetailPage() {
                           onClick={() => entry && toggleEpisode(value)}
                           disabled={!entry}
                         >
-                          <span className="episode-id">EP.{String(value).padStart(2, "0")}</span>
+                          <span className="episode-id">{epLabel}</span>
                           <span className="episode-title">
                             {episode.title ||
                               episode.title_english ||
