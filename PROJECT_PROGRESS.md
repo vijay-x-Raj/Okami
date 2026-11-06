@@ -21,11 +21,26 @@ Date: 2026-11-06
 - **Robust Storage Engine**: Reactive localStorage store supporting unified `okami_franchises` models with automatic non-destructive migration from legacy `okami_entries`, cross-tab synchronization, and versioned JSON export/import.
 - **Resilient Multi-Provider Proxy Routes (`app/api/jikan/*`)**: Dual-provider fallback with rapid timeouts preventing connection hangs, automated failover between AniList GraphQL and Jikan v4, LRU/TTL caching, and Next.js Cache-Control headers.
 - **Cinematic Dark UI**: Strict design system and typography (`Bebas Neue`, `IBM Plex Mono`, `Nunito`) with glassmorphism, accent badges, responsive navigation, and zero mock/dummy placeholders.
+- **Mihon-Inspired Architectural Optimizations (`TrackManager`, Smart Caching, Tri-State Filters, Ported Importers)**:
+  - **Relational TrackManager (`app/lib/storage.ts`)**:
+    - Complete relational separation of parent `UnifiedFranchiseEntry` records from child `SeasonTrack` and `MangaTrack` records (`okami_season_tracks`, `okami_manga_tracks`).
+    - Mihon auto-state transitions: progression from `0 -> 1` automatically moves status from `PLAN_TO_WATCH`/`PLAN_TO_READ` to `WATCHING`/`READING` and stamps `startedAt`; reaching total episodes/chapters marks entry as `COMPLETED`, stamps `completedAt`, and automatically advances `activeSeasonMalId` to the next chronological canon season.
+    - Append-only activity log (`okami_history`) tracking all user increments with relative timestamps, powering the new "Recently Watched / Read" interactive activity strip.
+    - Profile & Library stats summary metrics (Total Episodes, Total Chapters, Mean Score, Days Watched).
+  - **Smart Metadata Refresh & Rate-Limit Interceptor (`app/lib/jikan.ts` & `app/api/jikan/*`)**:
+    - Token-Bucket rate limiter (3 requests/sec capacity) with exponential backoff on HTTP 429 rate limits.
+    - Mihon Smart Refresh gates: Finished airing titles (`"Finished Airing"` / `"Finished"`) with cached episodes/volumes bypass redundant network requests.
+    - Ported `parseMediaNumber()` (from Mihon's `ChapterRecognition`) and `formatMediaNumberDisplay()` supporting `.5` decimal specials and interactive Season-Relative (`S2 Ep 1`) vs Absolute (`Ep 26`) numbering toggle.
+  - **Library Tri-State Filtering, Custom Categories & Multi-Platform Backup**:
+    - Mihon-style Tri-State chips (`Neutral` ⚪ -> `Include` 🟢 -> `Exclude` 🔴) for Status, Media Type, Airing Status, and Unwatched/Unread Badge Count.
+    - Sorting by Last Updated, Title A–Z, Score, Total Progress, Unwatched / Unread, Date Added, and Year.
+    - Unwatched Episodes / Unread Chapters badge pills on franchise cards (`totalAvailable - userProgress`).
+    - Custom Category management (add, delete, assign franchise to custom categories).
+    - Versioned JSON Backup Export/Import (v3 schema) plus native MyAnimeList (XML/JSON) and AniList (JSON) backup imports.
 
 ---
 
 ## Verification & Status
 - `npx tsc --noEmit`: **0 errors** (Clean TypeScript typecheck across all files).
-- `npm run lint`: **0 errors** (Clean ESLint verification; standard image optimization warnings).
 - `npm run build`: **0 errors** (All 15 routes compiled and static generation successful).
-- `dev server`: Active on `http://localhost:3000` (`200 OK`).
+- `git status`: Pushed to `origin/main` (`c38e733`).
