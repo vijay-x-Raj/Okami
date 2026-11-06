@@ -14,6 +14,16 @@ import {
   saveEntries,
   toggleFavourite,
   updateEntry,
+  loadFranchiseEntries,
+  saveFranchiseEntries,
+  migrateLegacyEntries,
+  exportAllData,
+  importAllData,
+  incrementEpisode,
+  incrementChapter,
+  findFranchiseByMalId,
+  getFranchiseDisplayInfo,
+  type UnifiedFranchiseEntry,
 } from "./lib/storage";
 
 const navItems = [
@@ -379,6 +389,8 @@ function EntryMenu({
 
 function LibraryView({
   entries,
+  franchises,
+  onQuickIncrement,
   activeView,
   setActiveView,
   activeType,
@@ -398,6 +410,8 @@ function LibraryView({
   onOpenTracker,
 }: {
   entries: OkamiEntry[];
+  franchises: Record<string, UnifiedFranchiseEntry>;
+  onQuickIncrement: (entry: OkamiEntry) => void;
   activeView: "grid" | "list";
   setActiveView: (value: "grid" | "list") => void;
   activeType: "all" | "anime" | "manga" | "films";
@@ -575,13 +589,13 @@ function LibraryView({
         </div>
       </div>
 
-      <div className="count-row">
+      <div className="count-row" suppressHydrationWarning>
         <span className="count-label">Entries</span>
-        <span className="count-num">{String(entries.length).padStart(3, "0")}</span>
+        <span className="count-num" suppressHydrationWarning>{String(entries.length).padStart(3, "0")}</span>
         <span className="count-label" style={{ marginLeft: 16 }}>
           Showing
         </span>
-        <span className="count-num">{String(displayedEntries.length).padStart(2, "0")}</span>
+        <span className="count-num" suppressHydrationWarning>{String(displayedEntries.length).padStart(2, "0")}</span>
       </div>
 
       {entries.length === 0 ? (
@@ -604,18 +618,22 @@ function LibraryView({
         <div className="grid library-grid">
           {displayedEntries.map((entry) => {
             const category = entryCategory(entry);
-            const isAnime = entry.type === "anime";
+            const franchise = findFranchiseByMalId(franchises, entry.id);
+            const displayInfo = franchise ? getFranchiseDisplayInfo(franchise) : null;
+            const pointerBadge =
+              displayInfo?.progressLabel ||
+              (entry.type === "manga"
+                ? `Ch ${entry.progress} / ${entry.total ?? "?"}`
+                : `Ep ${entry.progress} / ${entry.total ?? "?"}`);
+
             return (
               <article className="card" key={entryKey(entry)}>
                 <div
                   className="card-img-wrap"
-                  role={isAnime ? "button" : undefined}
-                  tabIndex={isAnime ? 0 : undefined}
-                  onClick={() => {
-                    if (isAnime) onOpenTracker(entry);
-                  }}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onOpenTracker(entry)}
                   onKeyDown={(event) => {
-                    if (!isAnime) return;
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
                       onOpenTracker(entry);
@@ -623,8 +641,20 @@ function LibraryView({
                   }}
                 >
                   <img className="card-img" src={entry.cover} alt={entry.title} />
+                  <div className="franchise-pointer-badge">{pointerBadge}</div>
                   <div className="card-img-overlay" />
                   <div className="card-actions">
+                    <button
+                      className="card-action-btn quick-plus"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onQuickIncrement(entry);
+                      }}
+                      title="Quick +1 progress"
+                    >
+                      +1 {entry.type === "manga" ? "Ch" : "Ep"}
+                    </button>
                     <button
                       className="card-action-btn"
                       type="button"
@@ -652,13 +682,12 @@ function LibraryView({
                   <div className={`status-badge ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</div>
                 </div>
                 <div className="card-info">
-                  {entry.type === "anime" ? (
-                    <Link className="card-title" href={`/anime/${entry.id}/info`}>
-                      {entry.title}
-                    </Link>
-                  ) : (
-                    <div className="card-title">{entry.title}</div>
-                  )}
+                  <Link
+                    className="card-title"
+                    href={entry.type === "anime" ? `/anime/${entry.id}/info` : `/manga/${entry.id}/info`}
+                  >
+                    {entry.title}
+                  </Link>
                   <div className="card-meta">
                     <span className={`type-chip ${category.className}`}>{category.label}</span>
                     <span className="meta-dot">•</span>
@@ -693,20 +722,18 @@ function LibraryView({
                 className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${entry.status === "watching" ? "row-watching" : ""}`}
               >
                 <span className="mono">{String(index + 1).padStart(2, "0")}</span>
-                {entry.type === "anime" ? (
-                  <Link aria-label={`Open tracker for ${entry.title}`} href={`/anime/${entry.id}`}>
-                    <img className="row-cover" src={entry.cover} alt={entry.title} />
-                  </Link>
-                ) : (
+                <Link
+                  aria-label={`Open tracker for ${entry.title}`}
+                  href={entry.type === "anime" ? `/anime/${entry.id}` : `/manga/${entry.id}`}
+                >
                   <img className="row-cover" src={entry.cover} alt={entry.title} />
-                )}
-                {entry.type === "anime" ? (
-                  <Link className="title-cell" href={`/anime/${entry.id}/info`}>
-                    {entry.title}
-                  </Link>
-                ) : (
-                  <span className="title-cell">{entry.title}</span>
-                )}
+                </Link>
+                <Link
+                  className="title-cell"
+                  href={entry.type === "anime" ? `/anime/${entry.id}/info` : `/manga/${entry.id}/info`}
+                >
+                  {entry.title}
+                </Link>
                 <span className={`type-chip ${category.className}`}>{category.label}</span>
                 <span className="mono">{entry.user_score ?? "--"}</span>
                 <span className="mono">{formatScore(entry.official_score)}</span>
@@ -1181,13 +1208,12 @@ function ExploreView({
                       </div>
                     </div>
                     <div className="card-info">
-                      {isAnime ? (
-                        <Link className="card-title" href={`/anime/${item.id}/info`}>
-                          {item.title}
-                        </Link>
-                      ) : (
-                        <div className="card-title">{item.title}</div>
-                      )}
+                      <Link
+                        className="card-title"
+                        href={isAnime ? `/anime/${item.id}/info` : `/manga/${item.id}/info`}
+                      >
+                        {item.title}
+                      </Link>
                       <div className="card-meta">
                         <span>{item.year || "--"}</span> • {item.format}
                       </div>
@@ -2064,15 +2090,57 @@ export default function Home() {
   const [activeStatus, setActiveStatus] = useState<OkamiStatus | "">("");
   const [sortBy, setSortBy] = useState<(typeof sortOptions)[number]>("Date Added");
   const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
-  const [modalState, setModalState] = useState<{ media: OkamiMedia; entry?: OkamiEntry } | null>(null);
-  const [detailMedia, setDetailMedia] = useState<OkamiMedia | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [logProgressOpen, setLogProgressOpen] = useState(false);
+  const [franchises, setFranchises] = useState<Record<string, UnifiedFranchiseEntry>>(() => {
+    migrateLegacyEntries();
+    return loadFranchiseEntries();
+  });
+
+  useEffect(() => {
+    migrateLegacyEntries();
+  }, []);
 
   const commitEntries = useCallback((next: OkamiEntry[]) => {
     saveEntries(next);
     setEntries(next);
   }, []);
+
+  const commitFranchises = useCallback((next: Record<string, UnifiedFranchiseEntry>) => {
+    saveFranchiseEntries(next);
+    setFranchises(next);
+  }, []);
+
+  const handleQuickIncrement = useCallback(
+    (entry: OkamiEntry) => {
+      const franchise = findFranchiseByMalId(franchises, entry.id);
+      const fId = franchise?.franchiseId ?? `franchise_${entry.id}`;
+
+      if (entry.type === "anime") {
+        const nextFranchises = incrementEpisode(franchises, fId, entry.id);
+        commitFranchises(nextFranchises);
+      } else {
+        const nextFranchises = incrementChapter(franchises, fId, entry.id);
+        commitFranchises(nextFranchises);
+      }
+
+      const maxTotal = entry.total && entry.total > 0 ? entry.total : Infinity;
+      const nextProg = Math.min(entry.progress + 1, maxTotal);
+      const nextStat: OkamiStatus =
+        entry.total && nextProg >= entry.total ? "completed" : "watching";
+      commitEntries(
+        updateEntry(entries, entry.id, entry.type, {
+          progress: nextProg,
+          status: nextStat,
+        })
+      );
+    },
+    [franchises, entries, commitEntries, commitFranchises]
+  );
+  const [modalState, setModalState] = useState<{ media: OkamiMedia; entry?: OkamiEntry } | null>(null);
+  const [detailMedia, setDetailMedia] = useState<OkamiMedia | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [logProgressOpen, setLogProgressOpen] = useState(false);
+
+
 
   const entryMap = useMemo(() => new Map(entries.map((entry) => [entryKey(entry), entry])), [entries]);
 
@@ -2160,18 +2228,7 @@ export default function Home() {
     commitEntries(toggleFavourite(entries, entry.id, entry.type));
   };
 
-  const openDetail = async (media: OkamiMedia) => {
-    setDetailMedia(media);
-    setDetailLoading(true);
-    try {
-      const detail = await fetchDetail(media.type, media.id);
-      setDetailMedia(detail);
-    } catch {
-      setDetailMedia(media);
-    } finally {
-      setDetailLoading(false);
-    }
-  };
+
 
   const openDetailById = async (type: MediaType, id: number) => {
     setDetailLoading(true);
@@ -2197,18 +2254,22 @@ export default function Home() {
   const openInfo = (media: OkamiMedia) => {
     if (media.type === "anime") {
       router.push(`/anime/${media.id}/info`);
-      return;
+    } else {
+      router.push(`/manga/${media.id}/info`);
     }
-    openDetail(media);
   };
 
   const openTracker = (entry: OkamiEntry) => {
-    if (entry.type !== "anime") return;
-    router.push(`/anime/${entry.id}`);
+    if (entry.type === "anime") {
+      router.push(`/anime/${entry.id}`);
+    } else {
+      router.push(`/manga/${entry.id}`);
+    }
   };
 
   const handleExport = () => {
-    const blob = new Blob([JSON.stringify(entries, null, 2)], { type: "application/json" });
+    const json = exportAllData();
+    const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -2226,16 +2287,17 @@ export default function Home() {
       if (!file) return;
       const text = await file.text();
       try {
-        const imported = JSON.parse(text) as OkamiEntry[];
-        if (!Array.isArray(imported)) throw new Error("Invalid format");
+        const { entries: importedEntries, franchises: importedFranchises } = importAllData(text);
         const merged = [...entries];
-        imported.forEach((incoming) => {
+        importedEntries.forEach((incoming) => {
           if (!merged.find((existing) => existing.id === incoming.id && existing.type === incoming.type)) {
             merged.push(incoming);
           }
         });
         commitEntries(merged);
-        alert(`Imported ${imported.length} entries.`);
+        const mergedFranchises = { ...franchises, ...importedFranchises };
+        commitFranchises(mergedFranchises);
+        alert(`Imported ${importedEntries.length} entries.`);
       } catch {
         alert("Invalid file. Expected a valid Okami JSON backup.");
       }
@@ -2244,9 +2306,10 @@ export default function Home() {
   };
 
   const handleClear = () => {
-    if (confirm("This will permanently delete all your entries. Are you sure?")) {
+    if (confirm("This will permanently delete all your entries and franchise progress. Are you sure?")) {
       if (confirm("Last chance — this cannot be undone.")) {
         commitEntries([]);
+        commitFranchises({});
       }
     }
   };
@@ -2338,6 +2401,8 @@ export default function Home() {
               {activeNav === "Library" ? (
                 <LibraryView
                   entries={entries}
+                  franchises={franchises}
+                  onQuickIncrement={handleQuickIncrement}
                   activeView={activeView}
                   setActiveView={setActiveView}
                   activeType={activeType}

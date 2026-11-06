@@ -28,7 +28,7 @@ export type JikanEpisode = {
 
 export type JikanRelation = {
   relation?: string | null;
-  entry?: Array<{ mal_id: number; type?: string; name?: string }>; // Jikan relation items
+  entry?: Array<{ mal_id: number; type?: string; name?: string }>;
 };
 
 export type JikanVoiceActor = {
@@ -45,6 +45,51 @@ export type JikanCharacter = {
   image: string;
   voiceActors: JikanVoiceActor[];
 };
+
+export interface FranchiseSeasonNode {
+  malId: number;
+  title: string;
+  type: string;
+  seasonNumber: number;
+  episodes: number | null;
+  airedFrom: string | null;
+  year: number;
+  score: number | null;
+  cover: string;
+}
+
+export interface FranchiseExtraNode {
+  malId: number;
+  title: string;
+  type: string;
+  episodes: number | null;
+  airedFrom: string | null;
+  year: number;
+  score: number | null;
+  cover: string;
+}
+
+export interface FranchiseAdaptationNode {
+  malId: number;
+  title: string;
+  type: string;
+  chapters: number | null;
+  volumes: number | null;
+  publishedFrom: string | null;
+  year: number;
+  score: number | null;
+  cover: string;
+}
+
+export interface FranchiseGraph {
+  franchiseId: string;
+  rootMalId: number;
+  title: string;
+  cover: string;
+  seasons: FranchiseSeasonNode[];
+  extras: FranchiseExtraNode[];
+  adaptations: FranchiseAdaptationNode[];
+}
 
 type JikanImage = {
   image_url?: string;
@@ -75,8 +120,9 @@ export type JikanItem = {
   synopsis?: string | null;
   studios?: JikanNamed[];
   authors?: JikanNamed[];
-  aired?: { prop?: { from?: { year?: number | null } } };
-  published?: { prop?: { from?: { year?: number | null } } };
+  aired?: { from?: string | null; prop?: { from?: { year?: number | null } } };
+  published?: { from?: string | null; prop?: { from?: { year?: number | null } } };
+  relations?: JikanRelation[];
 };
 
 type JikanCharacterItem = {
@@ -170,8 +216,39 @@ export function normalizeItem(item: JikanItem, type: MediaType): OkamiMedia {
   };
 }
 
+// ─── Jikan Rate-Limiting Queue ───
+// Enforces minimum 350ms between outbound requests to api.jikan.moe
+// with automatic retry on HTTP 429 (Too Many Requests).
+let _jikanQueueTail: Promise<void> = Promise.resolve();
+const JIKAN_MIN_INTERVAL_MS = 350;
+
+export async function jikanFetch(url: string | URL, init?: RequestInit): Promise<Response> {
+  const previousTail = _jikanQueueTail;
+  let release!: () => void;
+  _jikanQueueTail = new Promise<void>((r) => {
+    release = r;
+  });
+
+  await previousTail;
+
+  try {
+    let response = await fetch(url.toString(), init);
+
+    if (response.status === 429 || response.status === 502 || response.status === 503 || response.status === 504) {
+      const retryAfter = Number(response.headers.get("Retry-After") || "1.5");
+      const waitMs = Math.max(retryAfter * 1000, 1000);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      response = await fetch(url.toString(), init);
+    }
+
+    return response;
+  } finally {
+    setTimeout(() => release(), JIKAN_MIN_INTERVAL_MS);
+  }
+}
+
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await jikanFetch(url, init);
   if (!response.ok) {
     throw new Error(`Jikan request failed: ${response.status}`);
   }
@@ -180,25 +257,25 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export async function getAnimeEpisodes(id: number): Promise<JikanEpisode[]> {
   const url = `${JIKAN_BASE}/anime/${id}/episodes`;
-  const data = await getJson<{ data?: JikanEpisode[] }>(url, { cache: "force-cache" });
+  const data = await getJson<{ data?: JikanEpisode[] }>(url, { next: { revalidate: 86400 } });
   return Array.isArray(data?.data) ? data.data : [];
 }
 
 export async function getMangaVolumes(id: number): Promise<unknown[]> {
   const url = `${JIKAN_BASE}/manga/${id}/characters`;
-  const data = await getJson<{ data?: unknown[] }>(url, { cache: "force-cache" });
+  const data = await getJson<{ data?: unknown[] }>(url, { next: { revalidate: 86400 } });
   return Array.isArray(data?.data) ? data.data : [];
 }
 
 export async function getRelated(type: MediaType, id: number): Promise<JikanRelation[]> {
   const url = `${JIKAN_BASE}/${type}/${id}/relations`;
-  const data = await getJson<{ data?: JikanRelation[] }>(url, { cache: "force-cache" });
+  const data = await getJson<{ data?: JikanRelation[] }>(url, { next: { revalidate: 86400 } });
   return Array.isArray(data?.data) ? data.data : [];
 }
 
 export async function getAnimeCharacters(id: number): Promise<JikanCharacter[]> {
   const url = `${JIKAN_BASE}/anime/${id}/characters`;
-  const data = await getJson<{ data?: JikanCharacterItem[] }>(url, { cache: "force-cache" });
+  const data = await getJson<{ data?: JikanCharacterItem[] }>(url, { next: { revalidate: 86400 } });
   if (!Array.isArray(data?.data)) return [];
   return data.data
     .map((item) => {
@@ -218,4 +295,12 @@ export async function getAnimeCharacters(id: number): Promise<JikanCharacter[]> 
       };
     })
     .filter((item) => item.id > 0 || item.name !== "Unknown");
+}
+
+/** Fetch anime/manga with full details including relations (uses /full endpoint). */
+export async function getFullDetail(type: MediaType, id: number): Promise<JikanItem> {
+  const url = `${JIKAN_BASE}/${type}/${id}/full`;
+  const data = await getJson<{ data?: JikanItem }>(url, { next: { revalidate: 86400 } });
+  if (!data?.data) throw new Error(`Not found: ${type}/${id}`);
+  return data.data;
 }

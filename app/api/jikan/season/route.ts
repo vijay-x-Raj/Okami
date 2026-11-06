@@ -1,4 +1,4 @@
-import { JIKAN_BASE, normalizeItem, type JikanItem } from "@/app/lib/jikan";
+import { JIKAN_BASE, jikanFetch, normalizeItem, type JikanItem } from "@/app/lib/jikan";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   apiUrl.searchParams.set("limit", String(limit));
 
   try {
-    const response = await fetch(apiUrl, { next: { revalidate: 3600 } });
+    const response = await jikanFetch(apiUrl, { next: { revalidate: 3600 } });
     if (!response.ok) {
       return Response.json({ error: "Jikan request failed." }, { status: 502 });
     }

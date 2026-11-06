@@ -1,4 +1,4 @@
-import { JIKAN_BASE, ensureMediaType, normalizeItem, type JikanItem } from "@/app/lib/jikan";
+import { JIKAN_BASE, ensureMediaType, jikanFetch, normalizeItem, type JikanItem } from "@/app/lib/jikan";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   if (season) apiUrl.searchParams.set("season", season);
 
   try {
-    const response = await fetch(apiUrl, { cache: "no-store" });
+    const response = await jikanFetch(apiUrl, { cache: "no-store" });
     if (!response.ok) {
       return Response.json({ error: "Jikan request failed." }, { status: 502 });
     }

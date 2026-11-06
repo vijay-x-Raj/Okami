@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import type { JikanCharacter, OkamiMedia } from "@/app/lib/jikan";
-import { fetchCharacters, fetchDetail } from "@/app/lib/api";
+import type { FranchiseGraph, JikanCharacter, OkamiMedia } from "@/app/lib/jikan";
+import { fetchCharacters, fetchDetail, fetchFranchiseGraph } from "@/app/lib/api";
 import { addEntry, loadEntries, saveEntries, type OkamiEntry, type OkamiStatus } from "@/app/lib/storage";
 
 const DEFAULT_STATUS: OkamiStatus = "plan_to_watch";
@@ -38,6 +38,7 @@ export default function AnimeInfoPage() {
   const animeId = rawId ? Number(rawId) : Number.NaN;
   const [media, setMedia] = useState<OkamiMedia | null>(null);
   const [characters, setCharacters] = useState<JikanCharacter[]>([]);
+  const [franchiseGraph, setFranchiseGraph] = useState<FranchiseGraph | null>(null);
   const [loading, setLoading] = useState(true);
   const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
 
@@ -63,18 +64,25 @@ export default function AnimeInfoPage() {
       setLoading(true);
       setMedia(null);
       setCharacters([]);
+      setFranchiseGraph(null);
     });
 
     const load = async () => {
       try {
-        const [detail, cast] = await Promise.all([fetchDetail("anime", animeId), fetchCharacters(animeId)]);
+        const [detail, cast, graph] = await Promise.all([
+          fetchDetail("anime", animeId),
+          fetchCharacters(animeId).catch(() => []),
+          fetchFranchiseGraph(animeId, "anime").catch(() => null),
+        ]);
         if (!active) return;
         setMedia(detail);
         setCharacters(cast);
+        setFranchiseGraph(graph);
       } catch {
         if (!active) return;
         setMedia(null);
         setCharacters([]);
+        setFranchiseGraph(null);
       } finally {
         if (active) setLoading(false);
       }
@@ -102,13 +110,22 @@ export default function AnimeInfoPage() {
     );
   }
 
+  const linkedManga = franchiseGraph?.adaptations?.[0] ?? null;
+
   return (
     <div className="detail-page">
       <div className="detail-page-header">
-        <Link className="back-link" href="/">
-          Back to Library
-        </Link>
-        {media ? <span className="detail-page-id">MAL #{media.id}</span> : null}
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <Link className="back-link" href="/">
+            ← Back to Library
+          </Link>
+          {media ? <span className="detail-page-id">MAL #{media.id}</span> : null}
+        </div>
+        {linkedManga ? (
+          <Link className="adaptation-pill manga-link" href={`/manga/${linkedManga.malId}/info`}>
+            📖 Manga Adaptation: {linkedManga.title} →
+          </Link>
+        ) : null}
       </div>
 
       <div className="detail-card detail-hero-card">
@@ -128,6 +145,12 @@ export default function AnimeInfoPage() {
                   <span>{media.format}</span>
                   <span>•</span>
                   <span>{media.total ? `${media.total} eps` : "Ongoing"}</span>
+                  {media.studios && media.studios.length > 0 ? (
+                    <>
+                      <span>•</span>
+                      <span>{media.studios.join(", ")}</span>
+                    </>
+                  ) : null}
                 </div>
                 <div className="detail-tags">
                   {media.genres.map((tag) => (
@@ -140,11 +163,14 @@ export default function AnimeInfoPage() {
             </div>
             <div className="detail-page-actions">
               <button className="modal-btn primary" type="button" onClick={handleAdd} disabled={Boolean(entry)}>
-                {entry ? "In Library" : "Add to Library"}
+                {entry ? "In Library ✓" : "+ Add to Library"}
               </button>
-              {entry ? (
-                <Link className="modal-btn ghost" href={`/anime/${media.id}`}>
-                  Open Tracker
+              <Link className="modal-btn ghost" href={`/anime/${media.id}`}>
+                Open Anime Tracker →
+              </Link>
+              {linkedManga ? (
+                <Link className="modal-btn ghost" href={`/manga/${linkedManga.malId}`}>
+                  Track Manga
                 </Link>
               ) : null}
               <span className="detail-score">

@@ -1,4 +1,4 @@
-import { JIKAN_BASE, ensureMediaType, normalizeItem, type JikanItem } from "@/app/lib/jikan";
+import { JIKAN_BASE, ensureMediaType, jikanFetch, normalizeItem, type JikanItem } from "@/app/lib/jikan";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   const apiUrl = new URL(`${JIKAN_BASE}/${type}/${id}`);
 
   try {
-    const response = await fetch(apiUrl, { next: { revalidate: 3600 } });
+    const response = await jikanFetch(apiUrl, { next: { revalidate: 3600 } });
     if (!response.ok) {
       return Response.json({ error: "Jikan request failed." }, { status: 502 });
     }

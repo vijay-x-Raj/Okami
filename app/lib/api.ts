@@ -1,4 +1,17 @@
-import type { JikanCharacter, JikanEpisode, JikanRelation, MediaType, OkamiMedia } from "./jikan";
+import type {
+  FranchiseGraph,
+  JikanCharacter,
+  JikanEpisode,
+  JikanRelation,
+  MediaType,
+  OkamiMedia,
+} from "./jikan";
+
+export interface VolumeData {
+  mal_id: number;
+  volume_number: number;
+  title: string;
+}
 
 async function getJson<T>(input: RequestInfo | URL): Promise<T> {
   const response = await fetch(input, { headers: { "Content-Type": "application/json" } });
@@ -52,10 +65,10 @@ export async function fetchEpisodes(id: number): Promise<JikanEpisode[]> {
   return data.episodes;
 }
 
-export async function fetchVolumes(id: number): Promise<unknown[]> {
+export async function fetchVolumes(id: number): Promise<VolumeData[]> {
   const url = new URL("/api/jikan/volumes", window.location.origin);
   url.searchParams.set("id", String(id));
-  const data = await getJson<{ volumes: unknown[] }>(url);
+  const data = await getJson<{ volumes: VolumeData[] }>(url);
   return data.volumes;
 }
 
@@ -72,4 +85,15 @@ export async function fetchCharacters(id: number): Promise<JikanCharacter[]> {
   url.searchParams.set("id", String(id));
   const data = await getJson<{ characters: JikanCharacter[] }>(url);
   return data.characters;
+}
+
+export async function fetchFranchiseGraph(
+  id: number,
+  type: MediaType = "anime"
+): Promise<FranchiseGraph> {
+  const url = new URL("/api/jikan/franchise", window.location.origin);
+  url.searchParams.set("id", String(id));
+  url.searchParams.set("type", type);
+  const data = await getJson<{ data: FranchiseGraph }>(url);
+  return data.data;
 }

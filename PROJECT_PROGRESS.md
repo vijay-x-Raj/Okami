@@ -1,92 +1,65 @@
 # Okami Project Progress Report
-Date: 2026-05-20
+Date: 2026-11-03
 
 ## Scope Snapshot
-- Build an anime and manga tracker with four primary views (Library, Explore, My List, Profile).
-- Persist user data in localStorage using the okami_entries data model.
-- Use Jikan API v4 for metadata and cover art (no streaming features).
-- Deliver a cinematic UI with a defined design system and typography.
-- Reference designs and requirements in okami_build_prompt.md and okami_library.html.
+- Complete Anime & Manga tracker with four primary views (Library, Explore, My List, Profile) and dedicated media trackers.
+- **Unified Franchise Tracking**: Group all seasons, sequels, movies, OVAs, and linked manga adaptations under single franchise entries.
+- **Complete Manga Tracker**: Dedicated routes (`/manga/[id]`, `/manga/[id]/info`) with interactive volume grid, chapter/volume steppers, and adaptation switcher.
+- Persist user data in localStorage supporting both legacy `okami_entries` and unified `okami_franchises` models with automatic non-destructive migration.
+- Jikan API v4 client proxy with rate-limiting request queue (350ms throttle), automatic retry on HTTP 429, and Next.js caching.
+- Cinematic dark UI with strict design system and typography (`Bebas Neue`, `IBM Plex Mono`, `Nunito`).
 
-## Current Architecture
-- Framework: Next.js 16.2.6 App Router with TypeScript.
-- UI: Single client-rendered page in app/page.tsx with view switching.
-- API: Route handlers under app/api/jikan for proxying Jikan requests.
-- Data: localStorage helpers in app/lib/storage.ts.
-- Normalization: Jikan response shaping and image selection in app/lib/jikan.ts.
-- Styling: Global design system and layout rules in app/globals.css.
+---
 
-## Feature Status By View
-### Library
-- Grid and list views with filters (type, genre, status) and sorting (date added, score, title, year).
-- Entry cards with score and status badges; list rows with progress and dates.
-- Empty states for no entries and no matches.
+## Architecture Overview
 
-### Explore
-- Debounced search (600ms) against Jikan via /api/jikan/search.
-- Featured hero using seasonal data, plus top anime and manga strips.
-- Results grid with add-to-library and in-library states.
-- Static filter pills (genre, season, studio, type) are visual only.
+### Framework & Routing
+- Next.js 16.2.6 App Router with TypeScript 5 & React 19.
+- **Unified Franchise Resolver Route**: `app/api/jikan/franchise/route.ts` traverses `Sequel`, `Prequel`, `Parent story`, `Side story`, and `Adaptation` using BFS, sorting mainline `TV`/`ONA` seasons chronologically and computing a deterministic `rootMalId`.
+- **Anime Tracker Routes**:
+  - `app/anime/[id]/page.tsx`: Single-entry multi-season anime tracker with dynamic season selector, overall franchise progress rollup, one-click season completion, and switch-to-manga link.
+  - `app/anime/[id]/info/page.tsx`: Anime detail & cast overview with franchise context and manga adaptation deep-link.
+- **Manga Tracker Routes**:
+  - `app/manga/[id]/page.tsx`: Full manga reading tracker with Chapter/Volume steppers (+1, +5, direct inputs), interactive volume checklist grid powered by `/api/jikan/volumes`, and switch-to-anime link.
+  - `app/manga/[id]/info/page.tsx`: Manga metadata, volumes/chapters count, author attribution, character list, and tracker link.
+- **Jikan Proxy Routes**:
+  - `/api/jikan/franchise`: BFS franchise graph resolver.
+  - `/api/jikan/volumes`: Manga volumes breakdown endpoint.
+  - `/api/jikan/episodes`: Anime episodes list.
+  - `/api/jikan/characters`: Voice actors and characters cast.
+  - `/api/jikan/detail`: Media detail.
+  - `/api/jikan/search`: Search with genre, season, studio, type filters.
+  - `/api/jikan/season`: Seasonal anime.
+  - `/api/jikan/top`: Top anime/manga.
+  - `/api/jikan/related`: Related entries.
 
-### My List
-- Stat strip (total, completed, watching, mean score).
-- Status tabs and dense list table.
-- Score distribution chart driven by user scores.
-- Donut chart is currently static (visual only).
+### Data & State Management (`app/lib/storage.ts`)
+- **Unified Franchise Data Model**:
+  - `UnifiedFranchiseEntry`: Deterministic `franchiseId` (`franchise_<rootMalId>`), root metadata, `activeSeasonMalId`, `anime.seasons`, and `manga` entries.
+  - `SeasonProgress`: Season-level tracking (`episodesWatched`, `totalEpisodes`, `status: WatchStatus`).
+  - `MangaProgress`: Manga-level tracking (`chaptersRead`, `totalChapters`, `volumesRead`, `totalVolumes`, `status: ReadStatus`).
+- **Auto-Rollup & Auto-Advance Logic**:
+  - `incrementEpisode()`: When watched episodes reach total episodes, marks season as `COMPLETED` and automatically advances `activeSeasonMalId` to the next chronological season. Sets overall status to `COMPLETED` when all seasons finish.
+  - `updateMangaProgress()`, `incrementChapter()`, `incrementVolume()`: Auto-marks `COMPLETED` when chapters read reach total chapters.
+- **Non-Destructive Migration**:
+  - `migrateLegacyEntries()`: Migrates existing single-season `okami_entries` into unified `okami_franchises` on load without data loss.
+- **Backup & Restore**:
+  - Version 2 JSON Export/Import (`exportAllData()`, `importAllData()`) supporting both legacy flat arrays and full franchise graphs.
 
-### Profile
-- Stats summary derived from entries.
-- Settings actions are present but not implemented (export/import/clear).
-- Favorite titles are currently static text blocks.
+### UI & Design System (`app/globals.css`)
+- Pure CSS variables, strict 4px radius, Bebas Neue headings, IBM Plex Mono data printout, Nunito descriptions.
+- **Franchise Strip Banner**: Clean cinematic banner showing unified franchise title, total franchise progress, and season breakdown.
+- **Season Selector Bar**: Tabbed pills for S1, S2, S3... and movies/specials with completed `✓` indicators.
+- **Interactive Volume Grid**: Clickable volume tiles with reading state and mark-all functionality.
+- **Quick Steppers**: Dedicated `+1 Ch` and `+1 Vol` quick action steppers with numerical inputs for long-running series.
+- **Dashboard Franchise Cards**:
+  - Watchlist cards display the active pointer badge (`S2 • Ep 4/12` or `Vol 5 • Ch 42`).
+  - Direct `+1 Ep` / `+1 Ch` action button right on the card for instantaneous progress logging.
+  - Cross-adaptation pills (`📺 Switch to Anime` / `📖 Switch to Manga`).
 
-### Modals and Detail Panel
-- Add/Update entry modal with status, progress, score, and notes.
-- Slide-in detail panel with cover, metadata, and synopsis fetch on demand.
+---
 
-## Data Model (localStorage)
-- Key: okami_entries
-- Model: OkamiEntry with fields for id, type, title, cover, year, format, genres,
-  official_score, user_score, status, progress, total, date_added, notes, is_favourite.
-
-## API Integration (Jikan)
-- Endpoints:
-  - /api/jikan/search (no-store)
-  - /api/jikan/top (revalidate: 3600)
-  - /api/jikan/season (revalidate: 3600)
-  - /api/jikan/detail (revalidate: 3600)
-- Normalization includes title resolution, format mapping, and cover selection (WebP large, JPG fallback).
-
-## UI System and UX Notes
-- CSS variables define palette, spacing, and typography.
-- Sidebar + topbar layout with kanji watermarks per view.
-- Card hover, skeleton loading, modal animation, and responsive breakpoints implemented.
-
-## Completed Milestones
-- Next.js project scaffolded with App Router + TypeScript.
-- Library, Explore, My List, Profile views implemented in a single-page shell.
-- Jikan proxy API routes and client fetch helpers implemented.
-- localStorage data model and add/update modal flow implemented.
-- Detail panel fetches and displays additional metadata.
-- Design system and layout rules aligned to the original prompt.
-
-## In Progress / Gaps
-- Explore filter pills do not affect results yet.
-- My List overflow menu is a placeholder.
-- Profile settings actions (export/import/clear) are not wired.
-- Donut chart is static; needs real data mapping.
-- Detail panel does not include tabs (episodes/volumes/related).
-
-## Risks and Follow-Ups
-- Jikan rate limits: no client-side throttling beyond debounce.
-- No formal tests or automated QA yet.
-- localStorage schema changes are not versioned.
-
-## Files of Interest
-- app/page.tsx
-- app/globals.css
-- app/lib/api.ts
-- app/lib/jikan.ts
-- app/lib/storage.ts
-- app/api/jikan/*
-- okami_build_prompt.md
-- okami_library.html
+## Verification & Status
+- `npx tsc --noEmit`: **0 errors** (Clean TypeScript typecheck).
+- `npm run lint`: **0 errors** (ESLint pass).
+- `npm run build`: **0 errors** (All 15 routes compiled and static generation successful).
