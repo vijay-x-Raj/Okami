@@ -342,7 +342,7 @@ export default function MangaTrackerPage() {
             href={`/anime/${linkedAnimeSeason.malId}`}
             title="Open linked Anime adaptation"
           >
-            📺 Switch to Anime Tracker: {linkedAnimeSeason.title} →
+            Switch to Anime Tracker: {linkedAnimeSeason.title} →
           </Link>
         ) : null}
       </div>
@@ -455,7 +455,7 @@ export default function MangaTrackerPage() {
               </Link>
               {linkedAnimeSeason ? (
                 <Link className="modal-btn ghost" href={`/anime/${linkedAnimeSeason.malId}`}>
-                  📺 Open Anime Tracker
+                  Open Anime Tracker
                 </Link>
               ) : null}
               <span className="detail-score">

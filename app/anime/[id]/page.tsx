@@ -503,7 +503,7 @@ export default function AnimeDetailPage() {
             href={`/manga/${linkedManga.malId}`}
             title="Open linked Manga adaptation"
           >
-            📖 Switch to Manga: {linkedManga.title} →
+            Switch to Manga: {linkedManga.title} →
           </Link>
         ) : null}
       </div>

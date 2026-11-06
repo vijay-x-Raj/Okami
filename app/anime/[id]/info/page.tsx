@@ -176,12 +176,12 @@ export default function AnimeInfoPage() {
           </Link>
           {media ? <span className="detail-page-id">MAL #{media.id}</span> : null}
           <Link className="adaptation-pill anime-link" href={`/anime/${animeId}`}>
-            📺 Open Interactive Episode Tracker →
+            Open Interactive Episode Tracker →
           </Link>
         </div>
         {linkedManga ? (
           <Link className="adaptation-pill manga-link" href={`/manga/${linkedManga.malId}/info`}>
-            📖 Manga Adaptation: {linkedManga.title} →
+            Manga Adaptation: {linkedManga.title} →
           </Link>
         ) : null}
       </div>
@@ -380,7 +380,7 @@ export default function AnimeInfoPage() {
                           style={{ minWidth: 32, textAlign: "center" }}
                           onClick={() => setUserScore(userScore === num ? null : num)}
                         >
-                          ★ {num}
+                          {num}
                         </button>
                       ))}
                     </div>

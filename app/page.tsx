@@ -104,7 +104,7 @@ const libraryFilters = {
     { label: "On Hold", value: "on_hold" },
     { label: "Dropped", value: "dropped" },
     { label: "Plan to Watch / Read", value: "plan_to_watch" },
-    { label: "★ Favorites", value: "favorites" },
+    { label: "Favorites", value: "favorites" },
   ],
 } as const;
 
@@ -365,49 +365,79 @@ function MyListScoreCell({
   onUpdateScore: (newScore: number | null) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  const toggleOpen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isOpen && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.bottom + 4,
+        left: rect.left + rect.width / 2,
+      });
+    }
+    setIsOpen((prev) => !prev);
+  };
 
   useEffect(() => {
     if (!isOpen) return;
     const handleDown = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        popoverRef.current &&
+        !popoverRef.current.contains(e.target as Node) &&
+        buttonRef.current &&
+        !buttonRef.current.contains(e.target as Node)
+      ) {
         setIsOpen(false);
       }
     };
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setIsOpen(false);
     };
+    const handleScroll = () => setIsOpen(false);
     document.addEventListener("mousedown", handleDown);
     window.addEventListener("keydown", handleKey);
+    window.addEventListener("scroll", handleScroll, true);
     return () => {
       document.removeEventListener("mousedown", handleDown);
       window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("scroll", handleScroll, true);
     };
   }, [isOpen]);
 
   const hasScore = typeof score === "number" && score > 0;
 
   return (
-    <div className="mylist-score-cell-wrap" ref={containerRef}>
+    <div className="mylist-score-cell-wrap">
       <button
+        ref={buttonRef}
         type="button"
         className={`mylist-score-chip ${hasScore ? "has-score" : "no-score"}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          setIsOpen((prev) => !prev);
-        }}
+        onClick={toggleOpen}
         title={
           hasScore
-            ? `★ ${score}/10 — ${scoreLabels[score] || "Rated"} (Click to edit)`
+            ? `Score: ${score}/10 — ${scoreLabels[score] || "Rated"} (Click to edit)`
             : "Click to set your rating (1–10)"
         }
       >
-        <span className="score-star">{hasScore ? "★" : "☆"}</span>
         <span className="score-val">{hasScore ? score : "--"}</span>
       </button>
 
       {isOpen && (
-        <div className="mylist-score-popover custom-scroll" onClick={(e) => e.stopPropagation()}>
+        <div
+          ref={popoverRef}
+          className="mylist-score-popover custom-scroll"
+          style={{
+            position: "fixed",
+            top: `${coords.top}px`,
+            left: `${coords.left}px`,
+            transform: "translateX(-50%)",
+            zIndex: 9999,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="score-popover-header">
             <span>MY RATING</span>
             <span>(1–10)</span>
@@ -423,7 +453,7 @@ function MyListScoreCell({
                   setIsOpen(false);
                 }}
               >
-                <span className="score-num">★ {s}</span>
+                <span className="score-num">{s}</span>
                 <span className="score-desc">{scoreLabels[s]}</span>
               </button>
             ))}
@@ -436,7 +466,7 @@ function MyListScoreCell({
                   setIsOpen(false);
                 }}
               >
-                ✕ Clear Rating
+                Clear Rating
               </button>
             )}
           </div>
@@ -907,7 +937,7 @@ function LibraryView({
         </div>
         <div className="stats-summary-card">
           <span className="stats-card-label">Mean Rating</span>
-          <span className="stats-card-value">★ {stats.meanScore > 0 ? stats.meanScore.toFixed(1) : "--"}</span>
+          <span className="stats-card-value">{stats.meanScore > 0 ? stats.meanScore.toFixed(1) : "--"}</span>
           <span className="stats-card-sub">Across All Tracks</span>
         </div>
         <div className="stats-summary-card">
@@ -1234,7 +1264,7 @@ function LibraryView({
                     {item.is_favourite ? (
                       <>
                         <span className="meta-dot">•</span>
-                        <span style={{ color: "var(--accent)" }}>★</span>
+                        <span style={{ color: "var(--accent)", fontSize: 10, fontWeight: 700 }}>FAV</span>
                       </>
                     ) : null}
                   </div>
@@ -1439,7 +1469,7 @@ function ExploreMediaCard({
 
         {/* Score badge at top right */}
         <div className={`score-badge ${isHighScoring ? "gold" : ""}`}>
-          ★ {formatScore(media.official_score)}
+          {formatScore(media.official_score)}
         </div>
 
         {/* Status badge if already in vault */}
@@ -1650,7 +1680,7 @@ function CustomHeroSlider({
       {/* Slide Content */}
       <div className="explore-hero-content">
         <div className="explore-hero-stamp">
-          ★ {formatScore(current.official_score)} • {current.format || (current.type === "anime" ? "TV SERIES" : "MANGA")}
+          MAL {formatScore(current.official_score)} • {current.format || (current.type === "anime" ? "TV SERIES" : "MANGA")}
         </div>
 
         <h2 className="explore-hero-title">{current.title}</h2>
@@ -2666,7 +2696,7 @@ function MyListView({
     { key: "on_hold", label: "On Hold", count: tabCounts.on_hold },
     { key: "dropped", label: "Dropped", count: tabCounts.dropped },
     { key: "plan_to_watch", label: "Plan to Watch / Read", count: tabCounts.plan },
-    { key: "favourites", label: "★ Favourites", count: tabCounts.favourites },
+    { key: "favourites", label: "Favourites", count: tabCounts.favourites },
   ];
 
   // Filtered & sorted items
@@ -3134,7 +3164,7 @@ function MyListView({
                     style={{ color: "var(--gold)", fontWeight: 700, fontSize: 11 }}
                     title={`Official MyAnimeList Rating: ${item.official_score ? item.official_score.toFixed(2) : "Unrated"}`}
                   >
-                    {item.official_score && item.official_score > 0 ? `★ ${item.official_score.toFixed(1)}` : "--"}
+                    {item.official_score && item.official_score > 0 ? item.official_score.toFixed(1) : "--"}
                   </span>
                 </div>
 
@@ -3231,7 +3261,9 @@ function MyListView({
                     onClick={() => onToggleFavourite(getItemEntry(item))}
                     title={item.is_favourite ? "Remove favourite" : "Add to favourites"}
                   >
-                    {item.is_favourite ? "★" : "☆"}
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill={item.is_favourite ? "var(--gold)" : "none"} stroke={item.is_favourite ? "var(--gold)" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                    </svg>
                   </button>
 
                   {/* Open Tracker Link */}
@@ -3241,7 +3273,11 @@ function MyListView({
                     onClick={() => onOpenTracker(item)}
                     title="Open Tracker"
                   >
-                    ↗
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                      <polyline points="15 3 21 3 21 9" />
+                      <line x1="10" y1="14" x2="21" y2="3" />
+                    </svg>
                   </button>
 
                   {/* Edit Modal */}
@@ -3251,7 +3287,10 @@ function MyListView({
                     onClick={() => onEdit(getItemEntry(item))}
                     title="Edit full entry details"
                   >
-                    ✎
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
                   </button>
 
                   {/* Delete Button */}
@@ -3265,7 +3304,10 @@ function MyListView({
                     }}
                     title="Delete from list"
                   >
-                    ✕
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
                   </button>
                 </div>
               </div>
@@ -3349,23 +3391,23 @@ function ProfileView({
           </div>
           <div className="settings-list">
             <button className="settings-btn" type="button" onClick={onExport}>
-              📥 Export Vault Backup (JSON v3)
+              Export Vault Backup (JSON v3)
             </button>
             <button className="settings-btn" type="button" onClick={onImport}>
-              📤 Import Vault Backup (JSON)
+              Import Vault Backup (JSON)
             </button>
             {onImportMAL && (
               <button className="settings-btn" type="button" onClick={onImportMAL}>
-                📋 Import from MyAnimeList (XML / JSON)
+                Import from MyAnimeList (XML / JSON)
               </button>
             )}
             {onImportAniList && (
               <button className="settings-btn" type="button" onClick={onImportAniList}>
-                🌸 Import from AniList (JSON)
+                Import from AniList (JSON)
               </button>
             )}
             <button className="settings-btn danger" type="button" onClick={onClear}>
-              ⚠️ Clear All Vault Data
+              Clear All Vault Data
             </button>
           </div>
         </div>
@@ -3515,7 +3557,7 @@ function AddEntryModal({
             </div>
             <div className="update-drawer-scores-row">
               <span className="update-mal-score">
-                MAL ★ {formatScore(media.official_score)}
+                MAL {formatScore(media.official_score)}
               </span>
               <span className="update-library-status-badge">
                 {entry ? `In Library: ${entry.status.replace("_", " ")}` : "Not in Library"}
@@ -3545,7 +3587,7 @@ function AddEntryModal({
               <div className="update-progress-percent">
                 {total !== null ? (
                   remaining === 0 ? (
-                    <span style={{ color: "var(--teal)" }}>✓ All Caught Up</span>
+                    <span style={{ color: "var(--teal)" }}>All Caught Up</span>
                   ) : (
                     <span>{remaining} {remaining === 1 ? unitSingular : unit} remaining</span>
                   )
@@ -3689,7 +3731,7 @@ function AddEntryModal({
               <span className="update-section-label">03 / PERSONAL RATING</span>
               {userScore ? (
                 <span className="update-score-header-val">
-                  ★ {userScore} / 10 — {scoreLabels[userScore]}
+                  {userScore} / 10 — {scoreLabels[userScore]}
                 </span>
               ) : (
                 <span className="update-section-badge">UNRATED</span>
@@ -3714,7 +3756,7 @@ function AddEntryModal({
                 className="update-score-clear"
                 onClick={() => setUserScore(null)}
               >
-                ✕ Clear Rating
+                Clear Rating
               </button>
             )}
           </div>
@@ -3766,7 +3808,7 @@ function AddEntryModal({
                 });
               }}
             >
-              ✓ {entry ? "Save Changes" : "Add to Library"}
+              {entry ? "Save Changes" : "Add to Library"}
             </button>
           </div>
         </div>
