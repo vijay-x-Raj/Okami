@@ -636,17 +636,6 @@ body::after {
 .row-cover { width: 40px; height: 56px; object-fit: cover; border-radius: 3px; }
 .title-cell { font-family: var(--font-body, "Nunito", sans-serif); font-weight: 700; font-size: 12px; }
 .mono { font-family: var(--font-mono, "IBM Plex Mono", monospace); }
-.status-chip {
-  padding: 3px 6px; border-radius: 3px; text-transform: uppercase;
-  font-size: 9px; letter-spacing: 1px; font-weight: 700; text-align: center;
-}
-.status-chip.watching { background: var(--accent); color: #fff; }
-.status-chip.completed { background: var(--teal); color: #003028; }
-.status-chip.on-hold,
-.status-chip.hold { background: var(--gold); color: #1a1000; }
-.status-chip.dropped { background: var(--stone); color: var(--text-2); }
-.status-chip.plan-to-watch,
-.status-chip.plan { background: var(--plan-bg); color: var(--text-3); border: 1px solid var(--border-hi); }
 .table-action { color: var(--text-2); font-size: 12px; }
 .menu-wrap { position: relative; }
 .menu {
@@ -672,7 +661,6 @@ body::after {
 .menu-item:hover { background: var(--surface-4); color: var(--text-1); }
 .menu-item-danger { color: var(--accent); }
 .menu-item-active { color: var(--accent); }
-.status-cell { position: relative; }
 
 /* my list */
 .list-header .entries-badge {
@@ -719,25 +707,6 @@ body::after {
 .list-row > :nth-child(6),
 .list-row > :nth-child(8),
 .list-row > :nth-child(9) { justify-self: end; }
-.score-chip {
-  font-family: var(--font-mono, "IBM Plex Mono", monospace);
-  font-weight: 700; color: var(--gold);
-}
-.score-chip.score-active { color: var(--gold); }
-.score-chip { color: var(--text-3); cursor: pointer; }
-.progress-chip { font-family: var(--font-mono, "IBM Plex Mono", monospace); color: var(--text-2); }
-.progress-chip { cursor: pointer; }
-.inline-input {
-  background: var(--surface-3);
-  border: 1px solid var(--border-hi);
-  border-radius: 4px;
-  color: var(--text-1);
-  padding: 4px 6px;
-  font-family: var(--font-mono, "IBM Plex Mono", monospace);
-  font-size: 10px;
-  letter-spacing: 1px;
-  width: 60px;
-}
 .bar-count {
   font-family: var(--font-mono, "IBM Plex Mono", monospace);
   font-size: 9px;
@@ -2819,7 +2788,6 @@ body::after {
 .mylist-score-chip.has-score:hover {
   background: rgba(196, 168, 79, 0.22);
   border-color: var(--gold);
-  box-shadow: 0 0 10px rgba(196, 168, 79, 0.35);
 }
 
 .mylist-score-chip.no-score {
@@ -3158,7 +3126,6 @@ body::after {
 
 .mylist-bar-col:hover .mylist-bar-fill {
   background: var(--gold);
-  box-shadow: 0 0 10px rgba(196, 168, 79, 0.4);
 }
 
 .mylist-bar-col:hover .mylist-bar-count {
@@ -3577,7 +3544,7 @@ body::after {
   border-radius: 50%;
   background: var(--gold);
   border: 3px solid #fff;
-  box-shadow: 0 0 10px rgba(196, 168, 79, 0.6), 0 2px 6px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
   cursor: pointer;
   margin-top: -7px;
   transition: transform 0.1s ease, box-shadow 0.1s ease;
@@ -3585,7 +3552,7 @@ body::after {
 
 .update-range-slider::-webkit-slider-thumb:hover {
   transform: scale(1.18);
-  box-shadow: 0 0 16px rgba(196, 168, 79, 0.9), 0 2px 8px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.7);
 }
 
 .update-range-slider::-webkit-slider-thumb:active {
@@ -3606,7 +3573,7 @@ body::after {
   border-radius: 50%;
   background: var(--gold);
   border: 3px solid #fff;
-  box-shadow: 0 0 10px rgba(196, 168, 79, 0.6);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
   cursor: pointer;
 }
 
@@ -3729,7 +3696,6 @@ body::after {
   border-color: var(--accent);
   color: #fff;
   font-weight: 700;
-  box-shadow: 0 0 12px rgba(232, 25, 75, 0.4);
 }
 
 /* Star Score Selector (1–10) */
@@ -3772,7 +3738,6 @@ body::after {
   border-color: var(--gold);
   color: #111;
   font-weight: 700;
-  box-shadow: 0 0 10px rgba(196, 168, 79, 0.5);
 }
 
 .update-score-clear {

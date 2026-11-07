@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { JikanEpisode, JikanRelation, MangaVolumeItem, MediaType, OkamiMedia } from "./lib/jikan";
-import { parseMediaNumber, formatMediaNumberDisplay } from "./lib/jikan";
+import { formatMediaNumberDisplay } from "./lib/jikan";
 import { fetchDetail, fetchEpisodes, fetchRelated, fetchSeason, fetchTop, fetchVolumes, searchMedia } from "./lib/api";
 import {
   addEntry,
@@ -35,11 +35,7 @@ import {
   clearHistory,
   formatRelativeTime,
   loadCustomCategories,
-  saveCustomCategories,
   addCustomCategory,
-  removeCustomCategory,
-  assignFranchiseCategory,
-  unassignFranchiseCategory,
   importFromMAL,
   importFromAniList,
 } from "./lib/storage";
@@ -137,21 +133,6 @@ const scoreLabels: Record<number, string> = {
   3: "Very Bad",
   2: "Horrible",
   1: "Appalling",
-};
-
-const _GENRE_MAP: Record<string, number> = {
-  action: 1,
-  adventure: 2,
-  comedy: 4,
-  drama: 8,
-  fantasy: 10,
-  horror: 14,
-  romance: 22,
-  "sci-fi": 24,
-  seinen: 42,
-  shonen: 27,
-  sports: 30,
-  supernatural: 37,
 };
 
 function useDebounce<T>(value: T, delay: number) {
@@ -476,96 +457,6 @@ function MyListScoreCell({
   );
 }
 
-function ProgressCell({
-  entry,
-  editingKey,
-  setEditingKey,
-  onCommit,
-  entries,
-}: {
-  entry: OkamiEntry;
-  editingKey: string | null;
-  setEditingKey: (value: string | null) => void;
-  onCommit: (next: OkamiEntry[]) => void;
-  entries: OkamiEntry[];
-}) {
-  const key = entryKey(entry);
-  const unit = entry.type === "manga" ? "Ch" : "Ep";
-
-  if (editingKey === key) {
-    return (
-      <input
-        className="inline-input"
-        type="number"
-        min={0}
-        max={entry.total ?? 9999}
-        defaultValue={entry.progress}
-        autoFocus
-        onBlur={(event) => {
-          const value = Number(event.target.value);
-          if (Number.isFinite(value) && value >= 0) {
-            onCommit(updateEntry(entries, entry.id, entry.type, { progress: value }));
-          }
-          setEditingKey(null);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") setEditingKey(null);
-        }}
-      />
-    );
-  }
-
-  return (
-    <span className="progress-chip" onClick={() => setEditingKey(key)}>
-      {unit} {entry.progress} / {entry.total ?? "--"}
-    </span>
-  );
-}
-
-function StatusCell({
-  entry,
-  onCommit,
-  entries,
-}: {
-  entry: OkamiEntry;
-  onCommit: (next: OkamiEntry[]) => void;
-  entries: OkamiEntry[];
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useOutsideClick(ref, () => setOpen(false));
-
-  return (
-    <div className="status-cell" ref={ref}>
-      <button
-        className={`status-chip ${statusClass(entry.status)}`}
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-      >
-        {statusLabel(entry.status)}
-      </button>
-      {open ? (
-        <div className="menu">
-          {statusOptions.map((option) => (
-            <button
-              key={option.value}
-              className={`menu-item ${option.value === entry.status ? "menu-item-active" : ""}`}
-              type="button"
-              onClick={() => {
-                onCommit(updateEntry(entries, entry.id, entry.type, { status: option.value }));
-                setOpen(false);
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function EntryMenu({
   entry,
   onEdit,
@@ -658,11 +549,8 @@ function LibraryView({
   activeView,
   setActiveView,
   activeType,
-  setActiveType,
   activeGenre,
-  setActiveGenre,
   activeStatus,
-  setActiveStatus,
   sortBy,
   setSortBy,
   onDetail,
@@ -679,11 +567,8 @@ function LibraryView({
   activeView: "grid" | "list";
   setActiveView: (value: "grid" | "list") => void;
   activeType: "all" | "anime" | "manga" | "films";
-  setActiveType: (value: "all" | "anime" | "manga" | "films") => void;
   activeGenre: string;
-  setActiveGenre: (value: string) => void;
   activeStatus: OkamiStatus | "favorites" | "";
-  setActiveStatus: (value: OkamiStatus | "favorites" | "") => void;
   sortBy: (typeof sortOptions)[number];
   setSortBy: (value: (typeof sortOptions)[number]) => void;
   onDetail: (media: OkamiMedia) => void;
@@ -3494,19 +3379,6 @@ function AddEntryModal({
     }
   };
 
-  const scoreLabels: Record<number, string> = {
-    10: "Masterpiece",
-    9: "Great",
-    8: "Very Good",
-    7: "Good",
-    6: "Fine",
-    5: "Average",
-    4: "Bad",
-    3: "Very Bad",
-    2: "Horrible",
-    1: "Appalling",
-  };
-
   const sliderBackgroundStyle = {
     background: `linear-gradient(to right, var(--accent) 0%, var(--gold) ${percent}%, var(--surface-4) ${percent}%, var(--surface-4) 100%)`,
   };
@@ -3517,7 +3389,7 @@ function AddEntryModal({
         {/* Header */}
         <div className="update-drawer-header">
           <div>
-            <div className="update-drawer-eyebrow">// OKAMI TRACKER SYSTEM</div>
+            <div className="update-drawer-eyebrow">{"// OKAMI TRACKER SYSTEM"}</div>
             <h2 className="update-drawer-title">
               {entry ? "UPDATE ENTRY" : "ADD TO LIBRARY"}
             </h2>
@@ -4646,11 +4518,8 @@ export default function Home() {
                   activeView={activeView}
                   setActiveView={setActiveView}
                   activeType={activeType}
-                  setActiveType={setActiveType}
                   activeGenre={activeGenre}
-                  setActiveGenre={setActiveGenre}
                   activeStatus={activeStatus}
-                  setActiveStatus={setActiveStatus}
                   sortBy={sortBy}
                   setSortBy={setSortBy}
                   onDetail={openInfo}
