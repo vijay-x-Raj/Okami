@@ -1475,7 +1475,9 @@ function LibraryView({
                     ? `★ ${item.averageOfficialScore ? item.averageOfficialScore.toFixed(1) : item.official_score.toFixed(1)} Avg`
                     : formatScore(item.official_score)}
                 </span>
-                <span className={`status-chip ${statusClass(item.status)}`}>{statusLabel(item.status, item.type === "manga")}</span>
+                <span className={`status-chip ${statusClass(item.status)} ${item.type === "manga" ? "manga" : "anime"}`}>
+                  {statusLabel(item.status, item.type === "manga")}
+                </span>
                 <span className="mono">
                   {item.isFolder ? `${item.completedCount}/${item.itemCount} Done` : item.progressLabel}
                 </span>
@@ -4355,8 +4357,7 @@ function MyListView({
                 {/* 7. Interactive Status Select */}
                 <div style={{ display: "flex", justifyContent: "center" }}>
                   <select
-                    className={`status-chip ${statusClass(item.status)}`}
-                    style={{ cursor: "pointer", border: "none", outline: "none" }}
+                    className={`status-chip status-select ${statusClass(item.status)} ${item.type === "manga" ? "manga" : "anime"}`}
                     value={item.status}
                     onChange={(e) => handleUpdateItemStatus(item, e.target.value as OkamiStatus)}
                     title="Click to change status"

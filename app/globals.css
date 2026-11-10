@@ -514,6 +514,129 @@ img { display: block; max-width: 100%; }
   border: 1px solid rgba(196, 168, 79, 0.4);
 }
 
+/* ─── STATUS CHIP & INTERACTIVE STATUS SELECT ─── */
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-sizing: border-box;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+/* Status variants for .status-chip */
+.status-chip.watching {
+  background: rgba(232, 25, 75, 0.15);
+  color: #FF5A7E;
+  border-color: rgba(232, 25, 75, 0.45);
+}
+.theme-manga .status-chip.watching,
+.status-chip.watching.manga,
+.status-chip.reading {
+  background: rgba(37, 99, 235, 0.16);
+  color: #60A5FA;
+  border-color: rgba(59, 130, 246, 0.45);
+}
+.status-chip.completed {
+  background: rgba(61, 184, 156, 0.15);
+  color: #3DB89C;
+  border-color: rgba(61, 184, 156, 0.40);
+}
+.status-chip.hold {
+  background: rgba(196, 168, 79, 0.15);
+  color: #F5D565;
+  border-color: rgba(196, 168, 79, 0.45);
+}
+.status-chip.dropped {
+  background: rgba(110, 108, 128, 0.18);
+  color: #A09EB0;
+  border-color: rgba(110, 108, 128, 0.35);
+}
+.status-chip.plan {
+  background: rgba(45, 59, 82, 0.28);
+  color: #94A3B8;
+  border-color: rgba(75, 95, 128, 0.40);
+}
+
+/* Interactive <select> Dropdown Variant */
+select.status-chip,
+.status-chip.status-select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  outline: none;
+  padding: 4px 22px 4px 9px;
+  height: 24px;
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  background-size: 8px 5px;
+  text-align: left;
+  user-select: none;
+}
+
+/* Custom SVG Dropdown Chevron matching each status */
+select.status-chip.watching,
+.status-chip.status-select.watching {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%23FF5A7E' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.theme-manga select.status-chip.watching,
+.theme-manga .status-chip.status-select.watching,
+select.status-chip.watching.manga,
+.status-chip.status-select.watching.manga,
+select.status-chip.reading,
+.status-chip.status-select.reading {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%2360A5FA' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+select.status-chip.completed,
+.status-chip.status-select.completed {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%233DB89C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+select.status-chip.hold,
+.status-chip.status-select.hold {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%23F5D565' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+select.status-chip.dropped,
+.status-chip.status-select.dropped {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%23A09EB0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+select.status-chip.plan,
+.status-chip.status-select.plan {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%2394A3B8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* Hover & Focus States */
+select.status-chip:hover,
+.status-chip.status-select:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+select.status-chip:focus-visible,
+.status-chip.status-select:focus-visible {
+  outline: 2px solid var(--border-hi);
+  outline-offset: 1px;
+}
+
+/* Options dropdown menu styling */
+select.status-chip option,
+.status-chip.status-select option {
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+
 /* noise overlay */
 body::after {
   content: ""; position: fixed; inset: 0; pointer-events: none;
