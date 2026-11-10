@@ -507,21 +507,42 @@ export function getFranchiseEntry(
 /** Looks up franchise by any child mal_id (rootMalId, linkedMalIds, season malId, manga malId) */
 export function findFranchiseByMalId(
   entries: Record<string, UnifiedFranchiseEntry>,
-  malId: number
+  malId: number,
+  type?: MediaType
 ): UnifiedFranchiseEntry | undefined {
   if (!Number.isFinite(malId) || malId <= 0) return undefined;
   return Object.values(entries).find((f) => {
+    if (type === "anime") {
+      if (f.anime?.seasons && (malId in f.anime.seasons || Object.values(f.anime.seasons).some((s) => s.malId === malId))) {
+        return true;
+      }
+      if (f.franchiseId.startsWith("franchise_anime_") && (f.rootMalId === malId || (Array.isArray(f.linkedMalIds) && f.linkedMalIds.includes(malId)))) {
+        return true;
+      }
+      if (f.rootMalId === malId && f.anime && !f.manga) {
+        return true;
+      }
+      return false;
+    }
+    if (type === "manga") {
+      if (f.manga?.series && (malId in f.manga.series || Object.values(f.manga.series).some((s) => s.malId === malId))) {
+        return true;
+      }
+      if (f.franchiseId.startsWith("franchise_manga_") && (f.rootMalId === malId || (Array.isArray(f.linkedMalIds) && f.linkedMalIds.includes(malId)))) {
+        return true;
+      }
+      if (f.rootMalId === malId && f.manga && !f.anime) {
+        return true;
+      }
+      return false;
+    }
     if (f.rootMalId === malId) return true;
     if (Array.isArray(f.linkedMalIds) && f.linkedMalIds.includes(malId)) return true;
-    if (f.anime?.seasons) {
-      if (malId in f.anime.seasons || Object.values(f.anime.seasons).some((s) => s.malId === malId)) {
-        return true;
-      }
+    if (f.anime?.seasons && (malId in f.anime.seasons || Object.values(f.anime.seasons).some((s) => s.malId === malId))) {
+      return true;
     }
-    if (f.manga?.series) {
-      if (malId in f.manga.series || Object.values(f.manga.series).some((s) => s.malId === malId)) {
-        return true;
-      }
+    if (f.manga?.series && (malId in f.manga.series || Object.values(f.manga.series).some((s) => s.malId === malId))) {
+      return true;
     }
     return false;
   });
@@ -529,9 +550,10 @@ export function findFranchiseByMalId(
 
 export function getFranchiseByMalId(
   entries: Record<string, UnifiedFranchiseEntry>,
-  malId: number
+  malId: number,
+  type?: MediaType
 ): UnifiedFranchiseEntry | undefined {
-  return findFranchiseByMalId(entries, malId);
+  return findFranchiseByMalId(entries, malId, type);
 }
 
 export function upsertFranchiseEntry(
@@ -586,10 +608,10 @@ export function bundleFranchiseEntries(
 ): { updatedFranchises: Record<string, UnifiedFranchiseEntry>; franchiseId: string } {
   const allIds = Array.from(new Set([primaryItem.id, ...selectedItems.map((i) => i.id)]));
 
-  // Check if any of the items already belong to an existing franchise
+  // Check if any of the items already belong to an existing franchise of the same media type
   let existingFranchise: UnifiedFranchiseEntry | undefined;
   for (const id of allIds) {
-    const found = findFranchiseByMalId(franchises, id);
+    const found = findFranchiseByMalId(franchises, id, primaryItem.type);
     if (found) {
       existingFranchise = found;
       break;
@@ -597,7 +619,7 @@ export function bundleFranchiseEntries(
   }
 
   const rootMalId = existingFranchise?.rootMalId || primaryItem.id;
-  const franchiseId = existingFranchise?.franchiseId || `franchise_${rootMalId}`;
+  const franchiseId = existingFranchise?.franchiseId || `franchise_${primaryItem.type}_${rootMalId}`;
   const now = Date.now();
 
   const mergedLinkedIds = Array.from(
@@ -1354,7 +1376,7 @@ export function migrateLegacyEntries(): void {
   const franchises = loadFranchiseEntries();
 
   for (const entry of legacy) {
-    const franchiseId = `franchise_${entry.id}`;
+    const franchiseId = `franchise_${entry.type}_${entry.id}`;
     if (franchises[franchiseId]) continue;
 
     const now = Date.now();
@@ -1824,7 +1846,15 @@ export function getFranchiseDisplayInfo(
     rootMalId: franchise.rootMalId,
     title: franchise.title,
     coverImage: franchise.coverImage,
-    mediaType: hasAnime && hasManga ? "both" : hasAnime ? "anime" : "manga",
+    mediaType: franchise.franchiseId.startsWith("franchise_anime_")
+      ? "anime"
+      : franchise.franchiseId.startsWith("franchise_manga_")
+        ? "manga"
+        : hasAnime && hasManga
+          ? "both"
+          : hasAnime
+            ? "anime"
+            : "manga",
     progressLabel,
     overallStatus,
     watchStatus: franchise.anime?.overallStatus,
@@ -1963,7 +1993,7 @@ export function importFromMAL(content: string): { importedCount: number; errors:
           else if (statusStr.includes("hold")) watchStatus = "ON_HOLD";
           else if (statusStr.includes("drop")) watchStatus = "DROPPED";
 
-          const franchiseId = `franchise_${malId}`;
+          const franchiseId = `franchise_anime_${malId}`;
           const existing = franchises[franchiseId];
           const now = Date.now();
 
@@ -2032,7 +2062,7 @@ export function importFromMAL(content: string): { importedCount: number; errors:
           else if (statusStr.includes("hold")) readStatus = "ON_HOLD";
           else if (statusStr.includes("drop")) readStatus = "DROPPED";
 
-          const franchiseId = `franchise_${malId}`;
+          const franchiseId = `franchise_manga_${malId}`;
           const existing = franchises[franchiseId];
           const now = Date.now();
 
@@ -2082,7 +2112,7 @@ export function importFromMAL(content: string): { importedCount: number; errors:
       for (const item of items) {
         const malId = item.mal_id || item.id || item.series_animedb_id;
         if (!malId) continue;
-        const franchiseId = `franchise_${malId}`;
+        const franchiseId = `franchise_anime_${malId}`;
         const title = item.title || item.series_title || `Media #${malId}`;
         const eps = item.episodesWatched || item.watched_episodes || item.progress || 0;
         const now = Date.now();
@@ -2163,7 +2193,7 @@ export function importFromAniList(content: string): { importedCount: number; err
           else if (statusRaw.includes("PAUSED") || statusRaw.includes("HOLD")) status = "ON_HOLD";
           else if (statusRaw.includes("DROPPED")) status = "DROPPED";
 
-          const franchiseId = `franchise_${malId}`;
+          const franchiseId = `franchise_anime_${malId}`;
           const now = Date.now();
 
           franchises[franchiseId] = {

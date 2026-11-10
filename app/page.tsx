@@ -256,20 +256,22 @@ function buildUnifiedLibraryItems(
   entries: OkamiEntry[]
 ): UnifiedLibraryItem[] {
   const items: UnifiedLibraryItem[] = [];
-  const seenRoots = new Set<number>();
+  const seenRoots = new Set<string>();
 
   for (const franchise of Object.values(franchises)) {
-    seenRoots.add(franchise.rootMalId);
+    const displayInfo = getFranchiseDisplayInfo(franchise);
+    const mediaType = displayInfo.mediaType;
+
+    seenRoots.add(`${mediaType}:${franchise.rootMalId}`);
     if (Array.isArray(franchise.linkedMalIds)) {
-      franchise.linkedMalIds.forEach((id) => seenRoots.add(id));
+      franchise.linkedMalIds.forEach((id) => seenRoots.add(`${mediaType}:${id}`));
     }
     if (franchise.anime?.seasons) {
-      Object.keys(franchise.anime.seasons).forEach((id) => seenRoots.add(Number(id)));
+      Object.keys(franchise.anime.seasons).forEach((id) => seenRoots.add(`anime:${id}`));
     }
     if (franchise.manga?.series) {
-      Object.keys(franchise.manga.series).forEach((id) => seenRoots.add(Number(id)));
+      Object.keys(franchise.manga.series).forEach((id) => seenRoots.add(`manga:${id}`));
     }
-    const displayInfo = getFranchiseDisplayInfo(franchise);
 
     const activeMalId =
       displayInfo.mediaType === "manga"
@@ -278,9 +280,10 @@ function buildUnifiedLibraryItems(
 
     const matchingEntry = entries.find(
       (e) =>
-        e.id === activeMalId ||
-        e.id === franchise.rootMalId ||
-        (Array.isArray(franchise.linkedMalIds) && franchise.linkedMalIds.includes(e.id))
+        (displayInfo.mediaType === "both" || e.type === displayInfo.mediaType) &&
+        (e.id === activeMalId ||
+          e.id === franchise.rootMalId ||
+          (Array.isArray(franchise.linkedMalIds) && franchise.linkedMalIds.includes(e.id)))
     );
 
     const franchiseSeason =
@@ -361,7 +364,7 @@ function buildUnifiedLibraryItems(
   }
 
   for (const entry of entries) {
-    if (seenRoots.has(entry.id)) continue;
+    if (seenRoots.has(`${entry.type}:${entry.id}`)) continue;
     const total = entry.total || 0;
     const progress = entry.progress || 0;
     const diff = total > 0 ? Math.max(0, total - progress) : 0;
@@ -2328,6 +2331,8 @@ function BundleNamingModal({
 // ─── 2. Explore View (Unified Theme) ───
 
 function ExploreView({
+  activeType,
+  onTypeChange,
   entryMap,
   entries,
   franchises,
@@ -2336,6 +2341,8 @@ function ExploreView({
   onAdd,
   onDetail,
 }: {
+  activeType: MediaType;
+  onTypeChange: (type: MediaType) => void;
   entryMap: Map<string, OkamiEntry>;
   entries: OkamiEntry[];
   franchises: Record<string, UnifiedFranchiseEntry>;
@@ -2344,7 +2351,6 @@ function ExploreView({
   onAdd: (media: OkamiMedia) => void;
   onDetail: (media: OkamiMedia) => void;
 }) {
-  const [activeType, setActiveType] = useState<MediaType>("anime");
   const [query, setQuery] = useState("");
   const [activeSort, setActiveSort] = useState<"trending" | "score" | "popular" | "newest" | "title">("trending");
   const [activeGenres, setActiveGenres] = useState<string[]>([]);
@@ -2537,15 +2543,13 @@ function ExploreView({
   const loadDiscovery = useCallback(() => {
     let active = true;
 
-
-    // If we already have items in state, don't flash a full loading screen
-    if (seasonal.length === 0 && topAnime.length === 0 && topManga.length === 0) {
-      // If we already have items in state, don't flash a full loading screen
+    Promise.resolve().then(() => {
+      if (!active) return;
       if (seasonal.length === 0 && topAnime.length === 0 && topManga.length === 0) {
         setLoadingTop(true);
       }
-    }
-    setTopError(false);
+      setTopError(false);
+    });
 
     // Fast-path: Load top seasonal & top anime first to display content instantly (~200ms)
     Promise.all([
@@ -2796,7 +2800,7 @@ function ExploreView({
               type="button"
               className={`pill pill-type type-anime ${activeType === "anime" ? "active" : ""}`}
               onClick={() => {
-                setActiveType("anime");
+                onTypeChange("anime");
                 setActiveFormat("");
                 setActiveCategoryView(null);
               }}
@@ -2807,7 +2811,7 @@ function ExploreView({
               type="button"
               className={`pill pill-type type-manga ${activeType === "manga" ? "active" : ""}`}
               onClick={() => {
-                setActiveType("manga");
+                onTypeChange("manga");
                 setActiveFormat("");
                 setActiveCategoryView(null);
               }}
@@ -4765,30 +4769,6 @@ function AddEntryModal({
   const [notes, setNotes] = useState(() => entry?.notes ?? "");
   const [inputVal, setInputVal] = useState<string>(() => String(entry?.progress ?? 0));
 
-  // Multi-Select Franchise State
-  const [franchiseOptions, setFranchiseOptions] = useState<FranchiseItemOption[]>([]);
-  const [loadingFranchise, setLoadingFranchise] = useState<boolean>(true);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set(media ? [media.id] : []));
-  const [completedSeasonIds, setCompletedSeasonIds] = useState<Set<number>>(() => {
-    const s = new Set<number>();
-    if (entry?.completed_seasons) {
-      entry.completed_seasons.forEach((id) => s.add(id));
-    }
-    return s;
-  });
-
-  const toggleSeasonDone = (seasonId: number) => {
-    setCompletedSeasonIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(seasonId)) {
-        next.delete(seasonId);
-      } else {
-        next.add(seasonId);
-      }
-      return next;
-    });
-  };
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -4796,154 +4776,6 @@ function AddEntryModal({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
-
-  // Load Franchise Relations for Multiselect
-  useEffect(() => {
-    if (!media) return;
-    let active = true;
-    Promise.resolve().then(() => {
-      if (active) setLoadingFranchise(true);
-    });
-
-    async function loadFranchise() {
-      if (!media) return;
-      try {
-        const graph = await fetchFranchiseGraph(media.id, media.type).catch(() => null);
-        if (!active) return;
-
-        const options: FranchiseItemOption[] = [];
-        const seen = new Set<number>();
-
-        // Always include current media first
-        const currentOpt: FranchiseItemOption = {
-          id: media.id,
-          title: media.title,
-          type: media.type,
-          format: media.format || (media.type === "manga" ? "Manga" : "TV"),
-          total: media.total ?? null,
-          cover: media.cover,
-          relation: "Current Selection",
-          isCurrent: true,
-        };
-        options.push(currentOpt);
-        seen.add(media.id);
-
-        if (graph) {
-          if (Array.isArray(graph.seasons)) {
-            for (const s of graph.seasons) {
-              if (!seen.has(s.malId)) {
-                seen.add(s.malId);
-                options.push({
-                  id: s.malId,
-                  title: s.title,
-                  type: "anime",
-                  format: s.type || "TV",
-                  seasonNumber: s.seasonNumber,
-                  total: s.episodes || null,
-                  cover: s.cover || media.cover,
-                  relation: `Season ${s.seasonNumber}`,
-                });
-              }
-            }
-          }
-          if (Array.isArray(graph.extras)) {
-            for (const e of graph.extras) {
-              if (!seen.has(e.malId)) {
-                seen.add(e.malId);
-                options.push({
-                  id: e.malId,
-                  title: e.title,
-                  type: "anime",
-                  format: e.type || "Movie",
-                  total: e.episodes || null,
-                  cover: e.cover || media.cover,
-                  relation: e.type || "Special",
-                });
-              }
-            }
-          }
-          if (Array.isArray(graph.adaptations)) {
-            for (const a of graph.adaptations) {
-              if (!seen.has(a.malId)) {
-                seen.add(a.malId);
-                options.push({
-                  id: a.malId,
-                  title: a.title,
-                  type: "manga",
-                  format: a.type || "Manga",
-                  total: a.chapters || null,
-                  cover: a.cover || media.cover,
-                  relation: a.type || "Adaptation",
-                });
-              }
-            }
-          }
-        }
-
-        if (options.length <= 1) {
-          try {
-            const relatedList = await fetchRelated(media.type, media.id).catch(() => []);
-            if (active && Array.isArray(relatedList)) {
-              for (const rel of relatedList) {
-                const relName = rel.relation || "Related";
-                for (const item of rel.entry || []) {
-                  if (!seen.has(item.mal_id)) {
-                    seen.add(item.mal_id);
-                    options.push({
-                      id: item.mal_id,
-                      title: item.name || "Untitled",
-                      type: item.type === "manga" ? "manga" : "anime",
-                      format: item.type === "manga" ? "Manga" : "Anime",
-                      total: null,
-                      cover: media.cover,
-                      relation: relName,
-                    });
-                  }
-                }
-              }
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        if (active) {
-          setFranchiseOptions(options);
-
-          // Check if already in an existing explicit archive to keep linked IDs
-          const existing = findFranchiseByMalId(loadFranchiseEntries(), media.id);
-          if (existing && (existing.isArchive || existing.isArchiveFolder) && Array.isArray(existing.linkedMalIds) && existing.linkedMalIds.length > 0) {
-            setSelectedIds(new Set([media.id, ...existing.linkedMalIds]));
-          } else {
-            setSelectedIds(new Set([media.id]));
-          }
-        }
-      } catch {
-        if (active) {
-          setFranchiseOptions([
-            {
-              id: media.id,
-              title: media.title,
-              type: media.type,
-              format: media.format || (media.type === "manga" ? "Manga" : "TV"),
-              total: media.total ?? null,
-              cover: media.cover,
-              relation: "Current Selection",
-              isCurrent: true,
-            },
-          ]);
-        }
-      } finally {
-        if (active) setLoadingFranchise(false);
-      }
-    }
-
-    loadFranchise();
-
-    return () => {
-      active = false;
-    };
-  }, [media]);
 
   if (!media) return null;
 
@@ -4980,37 +4812,6 @@ function AddEntryModal({
       }
     }
   };
-
-  const toggleSelectId = (id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        if (id === media.id && next.size === 1) return prev;
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
-
-  const selectAll = () => {
-    setSelectedIds(new Set(franchiseOptions.map((o) => o.id)));
-  };
-
-  const selectCanonOnly = () => {
-    const canon = franchiseOptions
-      .filter((o) => o.type === media.type && (o.seasonNumber !== undefined || o.id === media.id))
-      .map((o) => o.id);
-    setSelectedIds(new Set(canon.length > 0 ? canon : [media.id]));
-  };
-
-  const selectCurrentOnly = () => {
-    setSelectedIds(new Set([media.id]));
-  };
-
-  const selectedCount = selectedIds.size;
-  const isMultiSeason = franchiseOptions.length > 1;
 
   return (
     <div className="update-drawer-overlay" onClick={onClose}>
@@ -5069,358 +4870,150 @@ function AddEntryModal({
 
         {/* Scrollable Body */}
         <div className="update-drawer-body custom-scroll">
-          {/* If Manga: Chapter Tracker Section */}
-          {isManga ? (
-            <>
-              <div className="update-section">
-                <div className="update-section-head">
-                  <span className="update-section-label">01 / CHAPTER TRACKER</span>
-                  <span className={`update-section-badge ${percent === 100 ? "highlight" : ""}`}>
-                    {total !== null ? `${percent}% COMPLETED` : "ONGOING RELEASE"}
-                  </span>
-                </div>
+          {/* Progress Tracker Section */}
+          <div className="update-section">
+            <div className="update-section-head">
+              <span className="update-section-label">
+                {isManga ? "01 / CHAPTER TRACKER" : "01 / EPISODE TRACKER"}
+              </span>
+              <span className={`update-section-badge ${percent === 100 ? "highlight" : ""}`}>
+                {total !== null ? `${percent}% COMPLETED` : isManga ? "ONGOING RELEASE" : "ONGOING BROADCAST"}
+              </span>
+            </div>
 
-                <div className="update-progress-display">
-                  <div className="update-progress-numbers">
-                    <span className="update-progress-num-big">{progress}</span>
-                    <span className="update-progress-total-sub">
-                      / {total !== null ? total : "∞"} chapters
-                    </span>
-                  </div>
-                  <div className="update-progress-percent">
-                    {total !== null ? (
-                      remaining === 0 ? (
-                        <span style={{ color: "var(--teal)" }}>All Caught Up</span>
-                      ) : (
-                        <span>{remaining} chapters remaining</span>
-                      )
-                    ) : (
-                      <span style={{ color: "var(--gold)" }}>Ongoing Publication</span>
-                    )}
-                  </div>
-                </div>
-
-                {total !== null && total > 0 && (
-                  <div className="update-progress-meter-track">
-                    <div
-                      className="update-progress-meter-fill"
-                      style={{ width: `${percent}%` }}
-                    />
-                  </div>
-                )}
-
-                <div className="update-steppers-row">
-                  <button
-                    type="button"
-                    className="update-stepper-btn"
-                    onClick={() => handleProgressChange(progress - 10)}
-                    disabled={progress <= 0}
-                    title="Back 10"
-                  >
-                    -10
-                  </button>
-                  <button
-                    type="button"
-                    className="update-stepper-btn"
-                    onClick={() => handleProgressChange(progress - 5)}
-                    disabled={progress <= 0}
-                    title="Back 5"
-                  >
-                    -5
-                  </button>
-                  <button
-                    type="button"
-                    className="update-stepper-btn"
-                    onClick={() => handleProgressChange(progress - 1)}
-                    disabled={progress <= 0}
-                    title="Back 1"
-                  >
-                    -1
-                  </button>
-
-                  <div className="update-direct-input-wrap" title="Directly enter chapter number">
-                    <input
-                      type="number"
-                      className="update-direct-input"
-                      min={0}
-                      max={total ?? 99999}
-                      value={inputVal}
-                      onChange={(e) => handleDirectInputChange(e.target.value)}
-                      onBlur={() => setInputVal(String(progress))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.currentTarget.blur();
-                        }
-                      }}
-                    />
-                  </div>
-
-                  <button
-                    type="button"
-                    className="update-stepper-btn"
-                    onClick={() => handleProgressChange(progress + 1)}
-                    disabled={total !== null && progress >= total}
-                    title="Forward 1"
-                  >
-                    +1
-                  </button>
-                  <button
-                    type="button"
-                    className="update-stepper-btn"
-                    onClick={() => handleProgressChange(progress + 5)}
-                    disabled={total !== null && progress >= total}
-                    title="Forward 5"
-                  >
-                    +5
-                  </button>
-                  <button
-                    type="button"
-                    className="update-stepper-btn"
-                    onClick={() => handleProgressChange(progress + 10)}
-                    disabled={total !== null && progress >= total}
-                    title="Forward 10"
-                  >
-                    +10
-                  </button>
-                  {total !== null && (
-                    <button
-                      type="button"
-                      className="update-stepper-btn max-btn"
-                      onClick={() => handleProgressChange(total)}
-                      disabled={progress >= total}
-                      title="Mark as completed"
-                    >
-                      MAX
-                    </button>
-                  )}
-                </div>
-
-                <div className="update-quick-step-row">
-                  <button
-                    type="button"
-                    className="update-quick-step-btn"
-                    onClick={() => handleProgressChange(progress + 1)}
-                    disabled={total !== null && progress >= total}
-                  >
-                    +1 Chapter Read
-                  </button>
-                </div>
+            <div className="update-progress-display">
+              <div className="update-progress-numbers">
+                <span className="update-progress-num-big">{progress}</span>
+                <span className="update-progress-total-sub">
+                  / {total !== null ? total : "∞"} {unit.toLowerCase()}
+                </span>
               </div>
-
-              {/* Manga Multiselect Volumes */}
-              <div className="update-section multiselect-section">
-                <div className="update-section-head">
-                  <span className="update-section-label">
-                    02 / MANGA EDITIONS (MULTI-SELECT)
-                  </span>
-                  <span className="multiselect-count-badge">
-                    {selectedCount} Selected • 1 Unified Entry
-                  </span>
-                </div>
-
-                <div className="multiselect-toolbar">
-                  <span style={{ fontSize: 11, color: "var(--text-3)" }}>
-                    Selected manga parts appear as a single entry in your library:
-                  </span>
-                  {isMultiSeason && (
-                    <div className="multiselect-quick-actions">
-                      <button
-                        type="button"
-                        className="multiselect-quick-btn"
-                        onClick={selectAll}
-                      >
-                        All ({franchiseOptions.length})
-                      </button>
-                      <button
-                        type="button"
-                        className="multiselect-quick-btn"
-                        onClick={selectCurrentOnly}
-                      >
-                        Current
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {loadingFranchise ? (
-                  <div style={{ fontSize: 11, color: "var(--text-3)", padding: "10px 0" }}>
-                    Indexing manga editions...
-                  </div>
+              <div className="update-progress-percent">
+                {total !== null ? (
+                  remaining === 0 ? (
+                    <span style={{ color: "var(--teal)" }}>All Caught Up</span>
+                  ) : (
+                    <span>{remaining} {unit.toLowerCase()} remaining</span>
+                  )
                 ) : (
-                  <div className="multiselect-list custom-scroll">
-                    {franchiseOptions.map((opt) => {
-                      const isChecked = selectedIds.has(opt.id);
-                      const isCurrent = opt.id === media.id;
-                      return (
-                        <div
-                          key={opt.id}
-                          className={`multiselect-item ${isChecked ? "selected" : ""} ${isCurrent ? "current" : ""}`}
-                          onClick={() => toggleSelectId(opt.id)}
-                        >
-                          <input
-                            type="checkbox"
-                            className="multiselect-checkbox"
-                            checked={isChecked}
-                            onChange={() => toggleSelectId(opt.id)}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                          <img
-                            className="multiselect-thumb"
-                            src={opt.cover}
-                            alt={opt.title}
-                          />
-                          <div className="multiselect-info">
-                            <div className="multiselect-title" title={opt.title}>
-                              {opt.title}
-                            </div>
-                            <div className="multiselect-meta">
-                              <span className={`multiselect-pill ${isCurrent ? "accent" : "gold"}`}>
-                                {opt.relation || opt.format}
-                              </span>
-                              <span>•</span>
-                              <span>{opt.total ? `${opt.total} chs` : "Ongoing"}</span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <span style={{ color: "var(--gold)" }}>
+                    {isManga ? "Ongoing Publication" : "Ongoing Broadcast"}
+                  </span>
                 )}
               </div>
-            </>
-          ) : (
-            /* If Anime: Season-Level Tracking & Optional Related Titles */
-            <div className="update-section multiselect-section">
-              <div className="update-section-head">
-                <span className="update-section-label">
-                  01 / RELATED SEASONS (OPTIONAL)
-                </span>
-                <span className="multiselect-count-badge">
-                  {selectedCount} Selected
-                </span>
+            </div>
+
+            {total !== null && total > 0 && (
+              <div className="update-progress-meter-track">
+                <div
+                  className="update-progress-meter-fill"
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+            )}
+
+            <div className="update-steppers-row">
+              <button
+                type="button"
+                className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress - 10)}
+                disabled={progress <= 0}
+                title="Back 10"
+              >
+                -10
+              </button>
+              <button
+                type="button"
+                className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress - 5)}
+                disabled={progress <= 0}
+                title="Back 5"
+              >
+                -5
+              </button>
+              <button
+                type="button"
+                className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress - 1)}
+                disabled={progress <= 0}
+                title="Back 1"
+              >
+                -1
+              </button>
+
+              <div className="update-direct-input-wrap" title={`Directly enter ${isManga ? "chapter" : "episode"} number`}>
+                <input
+                  type="number"
+                  className="update-direct-input"
+                  min={0}
+                  max={total ?? 99999}
+                  value={inputVal}
+                  onChange={(e) => handleDirectInputChange(e.target.value)}
+                  onBlur={() => setInputVal(String(progress))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
               </div>
 
-              <div className="multiselect-toolbar">
-                <span style={{ fontSize: 11, color: "var(--text-3)" }}>
-                  Related releases in this franchise (only current title selected by default):
-                </span>
-                {isMultiSeason && (
-                  <div className="multiselect-quick-actions">
-                    <button
-                      type="button"
-                      className="multiselect-quick-btn"
-                      onClick={selectAll}
-                      title="Select all related entries"
-                    >
-                      All ({franchiseOptions.length})
-                    </button>
-                    <button
-                      type="button"
-                      className="multiselect-quick-btn"
-                      onClick={selectCanonOnly}
-                      title="Select only canon seasons"
-                    >
-                      Canon
-                    </button>
-                    <button
-                      type="button"
-                      className="multiselect-quick-btn"
-                      onClick={selectCurrentOnly}
-                      title="Select current only"
-                    >
-                      Current
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {loadingFranchise ? (
-                <div style={{ fontSize: 11, color: "var(--text-3)", padding: "10px 0" }}>
-                  Indexing franchise canon & seasons...
-                </div>
-              ) : (
-                <div className="multiselect-list custom-scroll">
-                  {franchiseOptions.map((opt) => {
-                    const isChecked = selectedIds.has(opt.id);
-                    const isCurrent = opt.id === media.id;
-                    const isDone = completedSeasonIds.has(opt.id);
-                    return (
-                      <div
-                        key={opt.id}
-                        className={`multiselect-item ${isChecked ? "selected" : ""} ${isCurrent ? "current" : ""}`}
-                        onClick={() => toggleSelectId(opt.id)}
-                      >
-                        <input
-                          type="checkbox"
-                          className="multiselect-checkbox"
-                          checked={isChecked}
-                          onChange={() => toggleSelectId(opt.id)}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                        <img
-                          className="multiselect-thumb"
-                          src={opt.cover}
-                          alt={opt.title}
-                        />
-                        <div className="multiselect-info">
-                          <div className="multiselect-title" title={opt.title}>
-                            {opt.title}
-                          </div>
-                          <div className="multiselect-meta">
-                            <span className={`multiselect-pill ${isCurrent ? "accent" : opt.relation?.includes("Season") ? "gold" : ""}`}>
-                              {opt.relation || opt.format}
-                            </span>
-                            {opt.total ? (
-                              <>
-                                <span>•</span>
-                                <span>{opt.total} eps</span>
-                              </>
-                            ) : null}
-                            {isDone && (
-                              <>
-                                <span>•</span>
-                                <span style={{ color: "var(--teal)", fontWeight: 700 }}>COMPLETED</span>
-                              </>
-                            )}
-                            {isCurrent && (
-                              <>
-                                <span>•</span>
-                                <span style={{ color: "var(--accent)", fontWeight: 700 }}>ACTIVE</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        <div
-                          style={{ display: "flex", gap: "6px", alignItems: "center" }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            type="button"
-                            className={`season-action-btn ${isDone ? "active-done" : ""}`}
-                            style={{ fontSize: 10, padding: "3px 7px" }}
-                            onClick={() => {
-                              toggleSeasonDone(opt.id);
-                              if (!isChecked) toggleSelectId(opt.id);
-                            }}
-                            title={isDone ? "Mark season uncompleted" : "Mark season completed"}
-                          >
-                            {isDone ? "✓ Done" : "Done?"}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+              <button
+                type="button"
+                className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress + 1)}
+                disabled={total !== null && progress >= total}
+                title="Forward 1"
+              >
+                +1
+              </button>
+              <button
+                type="button"
+                className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress + 5)}
+                disabled={total !== null && progress >= total}
+                title="Forward 5"
+              >
+                +5
+              </button>
+              <button
+                type="button"
+                className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress + 10)}
+                disabled={total !== null && progress >= total}
+                title="Forward 10"
+              >
+                +10
+              </button>
+              {total !== null && (
+                <button
+                  type="button"
+                  className="update-stepper-btn max-btn"
+                  onClick={() => handleProgressChange(total)}
+                  disabled={progress >= total}
+                  title="Mark as completed"
+                >
+                  MAX
+                </button>
               )}
             </div>
-          )}
+
+            <div className="update-quick-step-row">
+              <button
+                type="button"
+                className="update-quick-step-btn"
+                onClick={() => handleProgressChange(progress + 1)}
+                disabled={total !== null && progress >= total}
+              >
+                {isManga ? "+1 Chapter Read" : "+1 Episode Watched"}
+              </button>
+            </div>
+          </div>
 
           {/* Tracking Status Section */}
           <div className="update-section">
             <div className="update-section-head">
-              <span className="update-section-label">
-                {isManga ? "03 / TRACKING STATUS" : "02 / TRACKING STATUS"}
-              </span>
+              <span className="update-section-label">02 / TRACKING STATUS</span>
               <span className="update-section-badge">
                 {status.replace("_", " ").toUpperCase()}
               </span>
@@ -5458,9 +5051,7 @@ function AddEntryModal({
           {/* Rating Section */}
           <div className="update-section">
             <div className="update-section-head">
-              <span className="update-section-label">
-                {isManga ? "04 / PERSONAL RATING" : "03 / PERSONAL RATING"}
-              </span>
+              <span className="update-section-label">03 / PERSONAL RATING</span>
               {userScore ? (
                 <span className="update-score-header-val">
                   {userScore} / 10 — {scoreLabels[userScore]}
@@ -5496,9 +5087,7 @@ function AddEntryModal({
           {/* Notes Section */}
           <div className="update-section">
             <div className="update-section-head">
-              <span className="update-section-label">
-                {isManga ? "05 / PRIVATE MEMO" : "04 / PRIVATE MEMO"}
-              </span>
+              <span className="update-section-label">04 / PRIVATE MEMO</span>
               <span className="update-section-badge">{notes.length} CHARS</span>
             </div>
             <textarea
@@ -5532,16 +5121,13 @@ function AddEntryModal({
               className="modal-btn primary"
               type="button"
               onClick={() => {
-                const selectedItems = franchiseOptions.filter((opt) => selectedIds.has(opt.id));
-                const completedArray = Array.from(completedSeasonIds);
                 onSave({
                   status,
                   userScore,
                   notes,
-                  progress: isManga ? progress : completedArray.length,
-                  completedSeasons: completedArray,
-                  completedVolumes: entry?.completed_volumes || [],
-                  selectedFranchiseItems: selectedItems.length > 0 ? selectedItems : undefined,
+                  progress,
+                  completedSeasons: [],
+                  completedVolumes: [],
                 });
               }}
             >
@@ -6146,24 +5732,16 @@ export default function Home() {
     if (!modalState) return;
     const { media, entry } = modalState;
     const now = new Date().toISOString();
-    const isManga = media.type === "manga";
 
     let finalStatus = data.status;
-    let clampedProgress = data.progress;
+    const maxTotal = media.total && media.total > 0 ? media.total : Infinity;
+    const clampedProgress = Math.max(0, Math.min(data.progress, maxTotal));
 
-    if (isManga) {
-      const maxTotal = media.total && media.total > 0 ? media.total : Infinity;
-      clampedProgress = Math.max(0, Math.min(data.progress, maxTotal));
-      if (clampedProgress > 0 && finalStatus === "plan_to_watch") {
-        finalStatus = "watching";
-      }
-      if (media.total && clampedProgress >= media.total) {
-        finalStatus = "completed";
-      }
-    } else {
-      if (data.completedSeasons.length > 0 && finalStatus === "plan_to_watch") {
-        finalStatus = "watching";
-      }
+    if (clampedProgress > 0 && finalStatus === "plan_to_watch") {
+      finalStatus = "watching";
+    }
+    if (media.total && clampedProgress >= media.total) {
+      finalStatus = "completed";
     }
 
     const nextEntry: OkamiEntry = {
@@ -6179,9 +5757,9 @@ export default function Home() {
       status: finalStatus,
       progress: clampedProgress,
       total: media.total ?? null,
-      completed_seasons: data.completedSeasons,
-      completed_volumes: data.completedVolumes,
-      completed_episodes: isManga ? Array.from({ length: clampedProgress }, (_, i) => i + 1) : [],
+      completed_seasons: [],
+      completed_volumes: [],
+      completed_episodes: Array.from({ length: clampedProgress }, (_, i) => i + 1),
       date_added: entry?.date_added ?? now,
       notes: data.notes,
       is_favourite: entry?.is_favourite ?? false,
@@ -6495,6 +6073,11 @@ export default function Home() {
               ) : null}
               {activeNav === "Explore" ? (
                 <ExploreView
+                  activeType={activeTab.toLowerCase() === "manga" ? "manga" : "anime"}
+                  onTypeChange={(type) => {
+                    setActiveTab(type === "manga" ? "Manga" : "Anime");
+                    setActiveType(type);
+                  }}
                   entryMap={entryMap}
                   entries={entries}
                   franchises={franchises}
