@@ -741,7 +741,7 @@ export default function MangaTrackerPage() {
                               height: 20,
                               borderRadius: "50%",
                               background: isRead ? "var(--manga-accent)" : "rgba(0,0,0,0.6)",
-                              color: isRead ? "#041B16" : "#fff",
+                              color: isRead ? "#FFFFFF" : "#fff",
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",

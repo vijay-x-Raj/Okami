@@ -5414,7 +5414,7 @@ function DetailPanel({
 
   return (
     <div className="detail-overlay" onClick={onClose}>
-      <aside className="detail-panel" onClick={(event) => event.stopPropagation()}>
+      <aside className={`detail-panel ${media.type === "manga" ? "theme-manga" : "theme-anime"}`} onClick={(event) => event.stopPropagation()}>
         <button className="detail-close" type="button" onClick={onClose}>
           ✕
         </button>
@@ -6038,11 +6038,11 @@ export default function Home() {
   };
 
   return (
-    <div className="app">
+    <div className={`app ${activeTab === "Manga" ? "theme-manga" : "theme-anime"}`}>
       <aside className="sidebar">
         <div className="logo">
           <div className="logo-text">ŌKAMI</div>
-          <div className="logo-sub">Digital Vault</div>
+          <div className="logo-sub">{activeTab === "Manga" ? "MANGA ARCHIVE" : "Digital Vault"}</div>
         </div>
 
         <nav className="nav">

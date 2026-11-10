@@ -10,13 +10,14 @@
   --border-hi:   #32323F;
   --anime-accent: #E8194B;
   --anime-accent-dim: rgba(232, 25, 75, 0.15);
-  --anime-accent-glow: rgba(232, 25, 75, 0.28);
+  --anime-accent-glow: transparent;
   --anime-border-hi: rgba(232, 25, 75, 0.45);
-  --manga-accent: #00D4AA;
-  --manga-accent-hover: #14F5C6;
-  --manga-accent-dim: rgba(0, 212, 170, 0.14);
-  --manga-accent-glow: rgba(0, 212, 170, 0.28);
-  --manga-border-hi: rgba(0, 212, 170, 0.45);
+  --manga-accent: #2563EB;
+  --manga-accent-hover: #1D4ED8;
+  --manga-accent-dim: rgba(37, 99, 235, 0.14);
+  --manga-accent-glow: transparent;
+  --manga-accent-light: #60A5FA;
+  --manga-border-hi: rgba(59, 130, 246, 0.40);
   --accent:      #E8194B;
   --accent-dim:  rgba(232, 25, 75, 0.15);
   --accent-glow: transparent;
@@ -25,7 +26,7 @@
   --stone:       #4A4A5A;
   --plan-bg:     #3A3A4A;
   --category-anime: #E8194B;
-  --category-manga: #00D4AA;
+  --category-manga: #2563EB;
   --category-film:  #C4A84F;
   --text-1:      #ECEAF5;
   --text-2:      #9A98AA;
@@ -40,18 +41,38 @@
 /* ─── SCOPED MEDIA THEMES ─── */
 .theme-manga,
 [data-theme="manga"] {
+  --base:          #0B0E14;
+  --surface-1:     #0F131C;
+  --surface-2:     #141A26;
+  --surface-3:     #1B2433;
+  --surface-4:     #222D40;
+  --border:        #1E2838;
+  --border-hi:     #2D3B52;
+  --text-1:        #EEF2F8;
+  --text-2:        #94A3B8;
+  --text-3:        #64748B;
   --accent:        var(--manga-accent);
   --accent-dim:    var(--manga-accent-dim);
-  --accent-glow:   var(--manga-accent-glow);
+  --accent-glow:   transparent;
   --border-hi:     var(--manga-border-hi);
   --category-manga: var(--manga-accent);
 }
 
 .theme-anime,
 [data-theme="anime"] {
+  --base:          #0D0D12;
+  --surface-1:     #111118;
+  --surface-2:     #17171F;
+  --surface-3:     #1E1E28;
+  --surface-4:     #25252F;
+  --border:        #252530;
+  --border-hi:     #32323F;
+  --text-1:        #ECEAF5;
+  --text-2:        #9A98AA;
+  --text-3:        #6E6C80;
   --accent:        var(--anime-accent);
   --accent-dim:    var(--anime-accent-dim);
-  --accent-glow:   var(--anime-accent-glow);
+  --accent-glow:   transparent;
   --border-hi:     var(--anime-border-hi);
   --category-anime: var(--anime-accent);
 }
@@ -135,6 +156,42 @@ img { display: block; max-width: 100%; }
 }
 .log-btn:hover { background: #ff1f54; transform: translateY(-1px); }
 .log-btn:active { transform: scale(0.96); }
+
+/* ─── SCOPED SIDEBAR THEMES ─── */
+.theme-manga .sidebar::before {
+  content: "画";
+  color: rgba(37, 99, 235, 0.04);
+}
+.theme-manga .logo-text {
+  color: var(--manga-accent);
+}
+.theme-manga .logo-sub {
+  color: #7B93B8;
+  letter-spacing: 2.5px;
+}
+.theme-manga .nav-item.active::before {
+  background: var(--manga-accent);
+}
+.theme-manga .log-btn {
+  background: var(--manga-accent);
+  color: #FFFFFF;
+}
+.theme-manga .log-btn:hover {
+  background: var(--manga-accent-hover);
+  transform: translateY(-1px);
+}
+
+.theme-anime .sidebar::before {
+  content: "狼";
+  color: rgba(232, 25, 75, 0.025);
+}
+.theme-anime .logo-text {
+  color: var(--anime-accent);
+}
+.theme-anime .nav-item.active::before {
+  background: var(--anime-accent);
+}
+
 .sidebar-util {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 14px; border-radius: 4px;
@@ -363,13 +420,14 @@ img { display: block; max-width: 100%; }
 .theme-manga .card-action-btn.quick-plus {
   background: var(--manga-accent);
   border-color: var(--manga-accent);
-  color: #041B16;
+  color: #FFFFFF;
+  font-weight: 700;
 }
 .card-manga .card-action-btn.quick-plus:hover,
 .theme-manga .card-action-btn.quick-plus:hover {
   background: var(--manga-accent-hover);
   border-color: var(--manga-accent-hover);
-  color: #041B16;
+  color: #FFFFFF;
 }
 .card-manga .unwatched-badge,
 .theme-manga .unwatched-badge {
@@ -379,12 +437,12 @@ img { display: block; max-width: 100%; }
 .card-manga .status-badge.watching,
 .theme-manga .status-badge.watching {
   background: var(--manga-accent);
-  color: #041B16;
+  color: #FFFFFF;
   font-weight: 700;
 }
 .card.card-manga:hover {
   border-color: var(--manga-border-hi);
-  box-shadow: 0 12px 32px rgba(0, 212, 170, 0.08);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
 }
 
 .score-badge {
@@ -411,7 +469,7 @@ img { display: block; max-width: 100%; }
   transform: translateY(4px);
 }
 .status-badge.watching  { background: var(--accent); color: #fff; }
-.status-badge.reading   { background: var(--manga-accent); color: #041B16; font-weight: 700; }
+.status-badge.reading   { background: var(--manga-accent); color: #FFFFFF; font-weight: 700; }
 .status-badge.completed { background: var(--teal); color: #003028; }
 .status-badge.hold      { background: var(--gold); color: #1a1000; }
 .status-badge.dropped   { background: var(--stone); color: var(--text-2); }
@@ -448,7 +506,7 @@ img { display: block; max-width: 100%; }
 .type-chip.type-manga {
   background: var(--manga-accent-dim);
   color: var(--manga-accent);
-  border: 1px solid rgba(0, 212, 170, 0.4);
+  border: 1px solid var(--manga-border-hi);
 }
 .type-chip.type-film {
   background: rgba(196, 168, 79, 0.15);
@@ -985,7 +1043,7 @@ body::after {
 }
 .pill.pill-type { border-color: var(--border-hi); color: var(--text-2); }
 .pill.pill-type.type-anime { border-color: rgba(232, 25, 75, 0.4); color: var(--anime-accent); }
-.pill.pill-type.type-manga { border-color: rgba(0, 212, 170, 0.4); color: var(--manga-accent); }
+.pill.pill-type.type-manga { border-color: var(--manga-border-hi); color: var(--manga-accent); }
 .pill.pill-type.type-film { border-color: rgba(196, 168, 79, 0.4); color: var(--category-film); }
 .pill.pill-type.type-anime:hover:not(.active) { border-color: var(--anime-accent); background: var(--anime-accent-dim); }
 .pill.pill-type.type-manga:hover:not(.active) { border-color: var(--manga-accent); background: var(--manga-accent-dim); }
@@ -994,7 +1052,7 @@ body::after {
   background: var(--anime-accent); border-color: var(--anime-accent); color: #fff;
 }
 .pill.pill-type.type-manga.active {
-  background: var(--manga-accent); border-color: var(--manga-accent); color: #041B16; font-weight: 700;
+  background: var(--manga-accent); border-color: var(--manga-accent); color: #FFFFFF; font-weight: 700;
 }
 .pill.pill-type.type-film.active {
   background: var(--category-film); border-color: var(--category-film); color: #1a1000; font-weight: 700;
@@ -1017,13 +1075,15 @@ body::after {
 .theme-manga .modal-btn.primary {
   background: var(--manga-accent);
   border-color: var(--manga-accent);
-  color: #041B16;
+  color: #FFFFFF;
   font-weight: 700;
+  box-shadow: none;
 }
 .theme-manga .modal-btn.primary:hover:not(:disabled) {
   background: var(--manga-accent-hover);
   border-color: var(--manga-accent-hover);
-  color: #041B16;
+  color: #FFFFFF;
+  box-shadow: none;
 }
 .modal-btn.ghost { background: transparent; color: var(--text-2); }
 
@@ -1193,7 +1253,7 @@ body::after {
   position: relative;
 }
 .detail-page.theme-manga {
-  background: radial-gradient(circle 900px at 100% 0%, rgba(0, 212, 170, 0.05), transparent 70%), var(--base);
+  background: radial-gradient(circle 900px at 100% 0%, rgba(37, 99, 235, 0.07), transparent 70%), var(--base);
 }
 .detail-page.theme-manga::before {
   content: "漫画";
@@ -1203,7 +1263,7 @@ body::after {
   font-size: 150px;
   font-family: var(--font-mono, "IBM Plex Mono", monospace);
   font-weight: 900;
-  color: rgba(0, 212, 170, 0.02);
+  color: rgba(37, 99, 235, 0.03);
   pointer-events: none;
   line-height: 1;
   z-index: 0;
@@ -1350,7 +1410,7 @@ body::after {
   outline-offset: 2px;
 }
 .status-button.status-watching { --status-color: var(--anime-accent); --status-contrast: #fff; }
-.status-button.status-reading { --status-color: var(--manga-accent); --status-contrast: #041B16; font-weight: 700; }
+.status-button.status-reading { --status-color: var(--manga-accent); --status-contrast: #FFFFFF; font-weight: 700; }
 .status-button.status-completed { --status-color: var(--teal); --status-contrast: #003028; }
 .status-button.status-on-hold { --status-color: var(--gold); --status-contrast: #1a1000; }
 .status-button.status-dropped { --status-color: var(--stone); --status-contrast: #e6e4ef; }
@@ -1554,13 +1614,13 @@ body::after {
 
 .adaptation-pill.manga-link {
   background: var(--manga-accent-dim);
-  border: 1px solid rgba(0, 212, 170, 0.4);
+  border: 1px solid var(--manga-border-hi);
   color: var(--manga-accent);
 }
 
 .adaptation-pill.manga-link:hover {
   background: var(--manga-accent);
-  color: #041B16;
+  color: #FFFFFF;
   font-weight: 700;
   border-color: var(--manga-accent);
 }
@@ -1916,13 +1976,14 @@ body::after {
 
 .franchise-node-action.manga {
   color: var(--manga-accent);
-  border-color: rgba(0, 212, 170, 0.4);
+  border-color: var(--manga-border-hi);
   background: var(--manga-accent-dim);
 }
 
 .franchise-node-action.manga:hover {
   background: var(--manga-accent);
-  color: #041B16;
+  color: #FFFFFF;
+  font-weight: 700;
   border-color: var(--manga-accent);
 }
 
@@ -1967,7 +2028,7 @@ body::after {
 .franchise-section-badge.manga {
   background: var(--manga-accent-dim);
   color: var(--manga-accent);
-  border: 1px solid rgba(0, 212, 170, 0.35);
+  border: 1px solid var(--manga-border-hi);
 }
 
 .franchise-section-count {
@@ -1988,7 +2049,7 @@ body::after {
   margin-right: 6px;
   background: var(--manga-accent-dim);
   color: var(--manga-accent);
-  border: 1px solid rgba(0, 212, 170, 0.35);
+  border: 1px solid var(--manga-border-hi);
 }
 
 .season-chip {
@@ -2038,7 +2099,7 @@ body::after {
 
 .modal-btn.secondary-manga {
   background: var(--manga-accent-dim);
-  border: 1px solid rgba(0, 212, 170, 0.45);
+  border: 1px solid var(--manga-border-hi);
   color: var(--manga-accent);
   font-weight: 600;
   text-decoration: none;
@@ -2056,7 +2117,7 @@ body::after {
 }
 .modal-btn.secondary-manga:hover {
   background: var(--manga-accent);
-  color: #041B16;
+  color: #FFFFFF;
   font-weight: 700;
   border-color: var(--manga-accent);
 }
@@ -2102,16 +2163,16 @@ body::after {
 
 .theme-manga .detail-page-id {
   color: var(--manga-accent);
-  border: 1px solid rgba(0, 212, 170, 0.3);
+  border: 1px solid var(--manga-border-hi);
   padding: 3px 8px;
   border-radius: 3px;
-  background: rgba(0, 212, 170, 0.06);
+  background: var(--manga-accent-dim);
 }
 
 .theme-manga .tag {
-  border: 1px solid rgba(0, 212, 170, 0.3);
+  border: 1px solid var(--manga-border-hi);
   color: var(--text-2);
-  background: rgba(0, 212, 170, 0.05);
+  background: var(--manga-accent-dim);
   transition: all 0.15s ease;
 }
 .theme-manga .tag:hover {
@@ -2128,20 +2189,20 @@ body::after {
 .theme-manga .modal-btn.primary {
   background: var(--manga-accent);
   border-color: var(--manga-accent);
-  color: #041B16;
+  color: #FFFFFF;
   font-weight: 700;
-  box-shadow: 0 4px 12px rgba(0, 212, 170, 0.25);
+  box-shadow: none;
 }
 .theme-manga .modal-btn.primary:hover:not(:disabled) {
   background: var(--manga-accent-hover);
   border-color: var(--manga-accent-hover);
-  color: #041B16;
-  box-shadow: 0 6px 20px rgba(0, 212, 170, 0.4);
+  color: #FFFFFF;
+  box-shadow: none;
 }
 .theme-manga .modal-btn.primary:disabled {
-  background: rgba(0, 212, 170, 0.18);
-  border-color: rgba(0, 212, 170, 0.35);
-  color: var(--manga-accent);
+  background: rgba(37, 99, 235, 0.20);
+  border-color: rgba(37, 99, 235, 0.35);
+  color: var(--text-3);
   opacity: 0.85;
 }
 
@@ -2156,8 +2217,8 @@ body::after {
 }
 
 .theme-manga .info-item:hover {
-  border-color: rgba(0, 212, 170, 0.35);
-  background: rgba(0, 212, 170, 0.04);
+  border-color: var(--manga-border-hi);
+  background: rgba(37, 99, 235, 0.05);
 }
 .theme-manga .info-value.highlight {
   color: var(--manga-accent);
@@ -2167,9 +2228,9 @@ body::after {
 .theme-manga .pill.active {
   background: var(--manga-accent);
   border-color: var(--manga-accent);
-  color: #041B16;
+  color: #FFFFFF;
   font-weight: 700;
-  box-shadow: 0 0 10px rgba(0, 212, 170, 0.35);
+  box-shadow: none;
 }
 .theme-manga .pill:hover:not(.active) {
   border-color: var(--manga-accent);
@@ -2189,23 +2250,24 @@ body::after {
   color: var(--manga-accent);
 }
 .theme-manga .cast-card:hover {
-  border-color: rgba(0, 212, 170, 0.4);
+  border-color: var(--manga-border-hi);
 }
 .theme-manga .cast-avatar {
-  border-color: rgba(0, 212, 170, 0.25);
+  border-color: rgba(59, 130, 246, 0.3);
 }
 
 .theme-manga .stepper-btn.primary {
   background: var(--manga-accent);
   border-color: var(--manga-accent);
-  color: #041B16;
+  color: #FFFFFF;
   font-weight: 700;
+  box-shadow: none;
 }
 .theme-manga .stepper-btn.primary:hover:not(:disabled) {
   background: var(--manga-accent-hover);
   border-color: var(--manga-accent-hover);
-  color: #041B16;
-  box-shadow: 0 0 10px rgba(0, 212, 170, 0.35);
+  color: #FFFFFF;
+  box-shadow: none;
 }
 .theme-manga .stepper-btn:hover:not(:disabled) {
   border-color: var(--manga-accent);
@@ -2915,7 +2977,7 @@ body::after {
   color: var(--manga-accent);
 }
 .stats-summary-card.stats-manga:hover {
-  border-color: rgba(0, 212, 170, 0.4);
+  border-color: var(--manga-border-hi);
 }
 .stats-summary-card.stats-anime .stats-card-sub {
   color: var(--anime-accent);
@@ -3893,7 +3955,7 @@ body::after {
 
 .update-drawer-panel.theme-manga::before {
   content: "巻";
-  color: rgba(0, 212, 170, 0.025);
+  color: rgba(37, 99, 235, 0.03);
 }
 
 .update-drawer-panel.theme-manga .update-drawer-eyebrow {
@@ -3903,11 +3965,11 @@ body::after {
 .update-drawer-panel.theme-manga .update-media-badge.manga {
   color: var(--manga-accent);
   background: var(--manga-accent-dim);
-  border: 1px solid rgba(0, 212, 170, 0.4);
+  border: 1px solid var(--manga-border-hi);
 }
 
 .update-drawer-panel.theme-manga .update-progress-meter-fill {
-  background: linear-gradient(90deg, var(--manga-accent) 0%, var(--teal) 100%);
+  background: linear-gradient(90deg, var(--manga-accent) 0%, #38BDF8 100%);
 }
 
 .update-drawer-panel.theme-manga .update-stepper-btn:hover:not(:disabled) {
@@ -3922,20 +3984,22 @@ body::after {
 .update-drawer-panel.theme-manga .update-section-badge.highlight {
   background: var(--manga-accent-dim);
   color: var(--manga-accent);
-  border-color: rgba(0, 212, 170, 0.4);
+  border-color: var(--manga-border-hi);
 }
 
 .update-drawer-panel.theme-manga .modal-btn.primary {
   background: var(--manga-accent);
   border-color: var(--manga-accent);
-  color: #041B16;
+  color: #FFFFFF;
   font-weight: 700;
+  box-shadow: none;
 }
 
 .update-drawer-panel.theme-manga .modal-btn.primary:hover:not(:disabled) {
   background: var(--manga-accent-hover);
   border-color: var(--manga-accent-hover);
-  color: #041B16;
+  color: #FFFFFF;
+  box-shadow: none;
 }
 
 /* Header */
