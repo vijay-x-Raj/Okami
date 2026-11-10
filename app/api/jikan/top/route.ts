@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const type = ensureMediaType(url.searchParams.get("type"));
   const page = Math.max(1, Number(url.searchParams.get("page") || 1));
-  const limit = clamp(Number(url.searchParams.get("limit") ?? 15), 1, 30);
+  const limit = clamp(Number(url.searchParams.get("limit") ?? 15), 1, 50);
   const filter = url.searchParams.get("filter")?.trim();
 
   try {

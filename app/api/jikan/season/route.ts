@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   const year = Number(url.searchParams.get("year")) || undefined;
   const season = url.searchParams.get("season")?.trim() || undefined;
   const page = Math.max(1, Number(url.searchParams.get("page") || 1));
-  const limit = clamp(Number(url.searchParams.get("limit") ?? 15), 1, 30);
+  const limit = clamp(Number(url.searchParams.get("limit") ?? 15), 1, 50);
 
   try {
     const data = await aniListSeason(year, season, page, limit);

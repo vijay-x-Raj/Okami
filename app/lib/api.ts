@@ -79,21 +79,37 @@ export async function fetchTop(
   type: MediaType,
   options?: { page?: number; limit?: number; filter?: string }
 ): Promise<OkamiMedia[]> {
+  const res = await fetchTopDetailed(type, options);
+  return res.data;
+}
+
+export async function fetchTopDetailed(
+  type: MediaType,
+  options?: { page?: number; limit?: number; filter?: string }
+): Promise<{ data: OkamiMedia[]; pagination?: { last_visible_page: number; has_next_page: boolean; total?: number } }> {
   const url = new URL("/api/jikan/top", window.location.origin);
   url.searchParams.set("type", type);
   if (options?.page) url.searchParams.set("page", String(options.page));
   if (options?.limit) url.searchParams.set("limit", String(options.limit));
   if (options?.filter) url.searchParams.set("filter", options.filter);
-  const data = await getJson<{ data: OkamiMedia[] }>(url);
-  return data.data || [];
+  const data = await getJson<{ data: OkamiMedia[]; pagination?: { last_visible_page: number; has_next_page: boolean; total?: number } }>(url);
+  return { data: data.data || [], pagination: data.pagination };
 }
 
 export async function fetchSeason(options?: { page?: number; limit?: number }): Promise<OkamiMedia[]> {
+  const res = await fetchSeasonDetailed(options);
+  return res.data;
+}
+
+export async function fetchSeasonDetailed(options?: { page?: number; limit?: number }): Promise<{
+  data: OkamiMedia[];
+  pagination?: { last_visible_page: number; has_next_page: boolean; total?: number };
+}> {
   const url = new URL("/api/jikan/season", window.location.origin);
   if (options?.page) url.searchParams.set("page", String(options.page));
   if (options?.limit) url.searchParams.set("limit", String(options.limit));
-  const data = await getJson<{ data: OkamiMedia[] }>(url);
-  return data.data || [];
+  const data = await getJson<{ data: OkamiMedia[]; pagination?: { last_visible_page: number; has_next_page: boolean; total?: number } }>(url);
+  return { data: data.data || [], pagination: data.pagination };
 }
 
 export async function fetchDetail(type: MediaType, id: number): Promise<OkamiMedia> {

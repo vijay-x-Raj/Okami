@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { JikanEpisode, JikanRelation, MangaVolumeItem, MediaType, OkamiMedia } from "./lib/jikan";
 import { formatMediaNumberDisplay } from "./lib/jikan";
-import { fetchDetail, fetchEpisodes, fetchRelated, fetchSeason, fetchTop, fetchVolumes, searchMedia } from "./lib/api";
+import { fetchDetail, fetchEpisodes, fetchRelated, fetchSeason, fetchSeasonDetailed, fetchTop, fetchTopDetailed, fetchVolumes, searchMedia } from "./lib/api";
 import {
   addEntry,
   type OkamiEntry,
@@ -1420,12 +1420,20 @@ function ExploreCategorySection({
   entryMap,
   onAdd,
   onDetail,
+  onViewAll,
+  onLoadMoreBatches,
+  hasMoreBatches,
+  loadingMoreBatches,
 }: {
   title: string;
   items: OkamiMedia[];
   entryMap: Map<string, OkamiEntry>;
   onAdd: (media: OkamiMedia) => void;
   onDetail: (media: OkamiMedia) => void;
+  onViewAll?: () => void;
+  onLoadMoreBatches?: () => Promise<void> | void;
+  hasMoreBatches?: boolean;
+  loadingMoreBatches?: boolean;
 }) {
   const [batchPage, setBatchPage] = useState(1);
   const pageSize = 10; // 2 rows of 5 columns
@@ -1436,6 +1444,15 @@ function ExploreCategorySection({
     return items.slice(start, start + pageSize);
   }, [items, batchPage, pageSize]);
 
+  const handleNext = async () => {
+    if (batchPage < totalBatches) {
+      setBatchPage((prev) => prev + 1);
+    } else if (hasMoreBatches && onLoadMoreBatches) {
+      await onLoadMoreBatches();
+      setBatchPage((prev) => prev + 1);
+    }
+  };
+
   return (
     <section className="explore-category-section">
       <div className="explore-category-header">
@@ -1444,32 +1461,48 @@ function ExploreCategorySection({
           <span className="explore-category-count">({items.length} titles)</span>
         </div>
 
-        {/* Custom Slider / Batch Navigation */}
-        {totalBatches > 1 && (
-          <div className="explore-batch-nav">
+        <div className="explore-category-actions">
+          {onViewAll && (
             <button
               type="button"
-              className="explore-batch-btn"
-              disabled={batchPage <= 1}
-              onClick={() => setBatchPage((prev) => Math.max(1, prev - 1))}
-              title="Previous 10 items"
+              className="explore-view-all-btn"
+              onClick={onViewAll}
+              title={`Explore all titles in ${title}`}
             >
-              ◀ Prev
+              <span>Explore All</span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
             </button>
-            <span className="explore-batch-page">
-              Page 0{batchPage} / 0{totalBatches}
-            </span>
-            <button
-              type="button"
-              className="explore-batch-btn"
-              disabled={batchPage >= totalBatches}
-              onClick={() => setBatchPage((prev) => Math.min(totalBatches, prev + 1))}
-              title="Next 10 items"
-            >
-              Next ▶
-            </button>
-          </div>
-        )}
+          )}
+
+          {/* Custom Slider / Batch Navigation */}
+          {totalBatches > 1 && (
+            <div className="explore-batch-nav">
+              <button
+                type="button"
+                className="explore-batch-btn"
+                disabled={batchPage <= 1}
+                onClick={() => setBatchPage((prev) => Math.max(1, prev - 1))}
+                title="Previous 10 items"
+              >
+                ◀ Prev
+              </button>
+              <span className="explore-batch-page">
+                Page {String(batchPage).padStart(2, "0")} / {String(totalBatches).padStart(2, "0")}
+              </span>
+              <button
+                type="button"
+                className="explore-batch-btn"
+                disabled={batchPage >= totalBatches && !hasMoreBatches}
+                onClick={handleNext}
+                title="Next 10 items"
+              >
+                {loadingMoreBatches ? "..." : "Next ▶"}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Multi-Row x Multi-Column Grid (2 rows x 5 columns) */}
@@ -1486,6 +1519,222 @@ function ExploreCategorySection({
         ))}
       </div>
     </section>
+  );
+}
+
+interface ExploreCategoryConfig {
+  id: string;
+  title: string;
+  subtitle: string;
+  kanji: string;
+  type: MediaType;
+  categoryType: "season" | "top" | "top-filter" | "genre";
+  genre?: string;
+  filter?: string;
+  initialItems?: OkamiMedia[];
+}
+
+function DedicatedCategoryView({
+  category,
+  entryMap,
+  onAdd,
+  onDetail,
+  onBack,
+}: {
+  category: ExploreCategoryConfig;
+  entryMap: Map<string, OkamiEntry>;
+  onAdd: (media: OkamiMedia) => void;
+  onDetail: (media: OkamiMedia) => void;
+  onBack: () => void;
+}) {
+  const [items, setItems] = useState<OkamiMedia[]>(category.initialItems || []);
+  const [page, setPage] = useState(1);
+  const [hasNextPage, setHasNextPage] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [activeSort, setActiveSort] = useState<string>("popular");
+  const [activeFormat, setActiveFormat] = useState<string>("");
+
+  const formatOptions = category.type === "anime" ? ANIME_FORMATS : MANGA_FORMATS;
+
+  const loadPage = useCallback(
+    async (targetPage: number, reset: boolean = false) => {
+      setLoading(true);
+      try {
+        let fetched: OkamiMedia[] = [];
+        let hasNext = false;
+
+        if (category.categoryType === "season") {
+          const res = await fetchSeasonDetailed({ page: targetPage, limit: 25 });
+          fetched = res.data;
+          hasNext = Boolean(res.pagination?.has_next_page);
+        } else if (category.categoryType === "top") {
+          const res = await fetchTopDetailed(category.type, {
+            page: targetPage,
+            limit: 25,
+            filter: category.filter,
+          });
+          fetched = res.data;
+          hasNext = Boolean(res.pagination?.has_next_page);
+        } else if (category.categoryType === "top-filter") {
+          const res = await fetchTopDetailed(category.type, {
+            filter: category.filter,
+            page: targetPage,
+            limit: 25,
+          });
+          fetched = res.data;
+          hasNext = Boolean(res.pagination?.has_next_page);
+        } else if (category.categoryType === "genre") {
+          const res = await searchMedia(category.type, "", {
+            genres: category.genre,
+            format: activeFormat || undefined,
+            sort: activeSort !== "trending" ? activeSort : undefined,
+            page: targetPage,
+            limit: 25,
+          });
+          fetched = res.data || [];
+          hasNext = Boolean(res.pagination?.has_next_page);
+        }
+
+        if (reset) {
+          setItems(fetched);
+        } else {
+          setItems((prev) => {
+            const existingIds = new Set(prev.map((m) => mediaKey(m)));
+            const unique = fetched.filter((m) => !existingIds.has(mediaKey(m)));
+            return [...prev, ...unique];
+          });
+        }
+        setPage(targetPage);
+        setHasNextPage(hasNext);
+      } catch {
+        // ignore
+      } finally {
+        setLoading(false);
+      }
+    },
+    [category, activeFormat, activeSort]
+  );
+
+  useEffect(() => {
+    let active = true;
+    if (activeFormat || activeSort !== "popular") {
+      Promise.resolve().then(() => {
+        if (active) loadPage(1, true);
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [activeFormat, activeSort, loadPage]);
+
+  useEffect(() => {
+    let active = true;
+    if (!category.initialItems || category.initialItems.length === 0) {
+      Promise.resolve().then(() => {
+        if (active) loadPage(1, true);
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [category.initialItems, loadPage]);
+
+  const handleLoadMore = () => {
+    if (loading || !hasNextPage) return;
+    loadPage(page + 1, false);
+  };
+
+  return (
+    <div className="explore-dedicated-view">
+      <div className="explore-dedicated-header">
+        <div className="explore-dedicated-nav-row">
+          <button type="button" className="explore-back-btn" onClick={onBack}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+            <span>Back to Explore</span>
+          </button>
+          <span className="explore-dedicated-badge">{category.kanji} {"// FULL COLLECTION"}</span>
+        </div>
+
+        <div className="explore-dedicated-title-wrap">
+          <div className="explore-dedicated-title-row">
+            <h2 className="explore-dedicated-title">{category.title}</h2>
+            <span className="explore-dedicated-count">({items.length} titles loaded)</span>
+          </div>
+          <p className="explore-dedicated-sub">{category.subtitle}</p>
+        </div>
+
+        {category.categoryType === "genre" && (
+          <div className="explore-dedicated-filter-row">
+            <div className="explore-dedicated-filter-group">
+              <span className="filter-label">Format:</span>
+              <button
+                type="button"
+                className={`pill ${activeFormat === "" ? "active" : ""}`}
+                onClick={() => setActiveFormat("")}
+              >
+                All
+              </button>
+              {formatOptions.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  className={`pill ${activeFormat === item.value ? "active" : ""}`}
+                  onClick={() => setActiveFormat(item.value)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="explore-dedicated-filter-group">
+              <span className="filter-label">Sort:</span>
+              {SORT_OPTIONS.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  className={`pill ${activeSort === item.value ? "active" : ""}`}
+                  onClick={() => setActiveSort(item.value)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="explore-grid">
+        {items.map((item, idx) => (
+          <ExploreMediaCard
+            key={mediaKey(item)}
+            media={item}
+            entryMap={entryMap}
+            onAdd={onAdd}
+            onDetail={onDetail}
+            index={idx}
+          />
+        ))}
+      </div>
+
+      <div className="load-more-container" style={{ marginTop: "24px", display: "flex", justifyContent: "center" }}>
+        {hasNextPage ? (
+          <button
+            type="button"
+            className="load-more-btn"
+            onClick={handleLoadMore}
+            disabled={loading}
+          >
+            {loading ? "Loading More Titles..." : "Load Next Page ▾"}
+          </button>
+        ) : (
+          <div className="all-loaded-pill" style={{ opacity: 0.7, padding: "8px 16px", fontSize: "11px" }}>
+            All available titles in this collection loaded
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1623,6 +1872,9 @@ function ExploreView({
   const [activeSeason, setActiveSeason] = useState("");
   const [activeStatus, setActiveStatus] = useState("");
 
+  const [activeCategoryView, setActiveCategoryView] = useState<ExploreCategoryConfig | null>(null);
+  const [loadingBatchCategory, setLoadingBatchCategory] = useState<string | null>(null);
+
   const [results, setResults] = useState<OkamiMedia[]>([]);
   const [page, setPage] = useState(1);
   const [totalResults, setTotalResults] = useState<number | null>(null);
@@ -1630,14 +1882,14 @@ function ExploreView({
   const [loadingSearch, setLoadingSearch] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  // Categorized Anime lists (20 items each)
+  // Categorized Anime lists (up to 50 items each for multi-page carousel)
   const [seasonal, setSeasonal] = useState<OkamiMedia[]>([]);
   const [topAnime, setTopAnime] = useState<OkamiMedia[]>([]);
   const [topMovies, setTopMovies] = useState<OkamiMedia[]>([]);
   const [actionAnime, setActionAnime] = useState<OkamiMedia[]>([]);
   const [psychAnime, setPsychAnime] = useState<OkamiMedia[]>([]);
 
-  // Categorized Manga lists (20 items each)
+  // Categorized Manga lists (up to 50 items each for multi-page carousel)
   const [topManga, setTopManga] = useState<OkamiMedia[]>([]);
   const [topNovels, setTopNovels] = useState<OkamiMedia[]>([]);
   const [actionManga, setActionManga] = useState<OkamiMedia[]>([]);
@@ -1668,18 +1920,18 @@ function ExploreView({
     });
 
     Promise.all([
-      // Anime categories
-      fetchSeason({ limit: 20 }).catch(() => []),
-      fetchTop("anime", { limit: 20 }).catch(() => []),
-      fetchTop("anime", { filter: "movie", limit: 20 }).catch(() => []),
-      searchMedia("anime", "", { genres: "Action", limit: 20 }).then(r => r.data).catch(() => []),
-      searchMedia("anime", "", { genres: "Psychological", limit: 20 }).then(r => r.data).catch(() => []),
+      // Anime categories (up to 50 items each)
+      fetchSeason({ limit: 50 }).catch(() => []),
+      fetchTop("anime", { limit: 50 }).catch(() => []),
+      fetchTop("anime", { filter: "movie", limit: 50 }).catch(() => []),
+      searchMedia("anime", "", { genres: "Action", limit: 50 }).then(r => r.data).catch(() => []),
+      searchMedia("anime", "", { genres: "Psychological", limit: 50 }).then(r => r.data).catch(() => []),
 
-      // Manga categories
-      fetchTop("manga", { limit: 20 }).catch(() => []),
-      fetchTop("manga", { filter: "novels", limit: 20 }).catch(() => []),
-      searchMedia("manga", "", { genres: "Action", limit: 20 }).then(r => r.data).catch(() => []),
-      searchMedia("manga", "", { genres: "Romance", limit: 20 }).then(r => r.data).catch(() => []),
+      // Manga categories (up to 50 items each)
+      fetchTop("manga", { limit: 50 }).catch(() => []),
+      fetchTop("manga", { filter: "novels", limit: 50 }).catch(() => []),
+      searchMedia("manga", "", { genres: "Action", limit: 50 }).then(r => r.data).catch(() => []),
+      searchMedia("manga", "", { genres: "Romance", limit: 50 }).then(r => r.data).catch(() => []),
     ])
       .then(([seasonData, animeData, movieData, actAnimeData, psychData, mangaData, novelData, actMangaData, romMangaData]) => {
         if (!active) return;
@@ -1710,6 +1962,63 @@ function ExploreView({
       active = false;
     };
   }, []);
+
+  const loadMoreBatches = async (catId: string) => {
+    if (loadingBatchCategory) return;
+    setLoadingBatchCategory(catId);
+    try {
+      if (catId === "seasonal") {
+        const nextPage = Math.floor(seasonal.length / 25) + 1;
+        const res = await fetchSeasonDetailed({ page: nextPage, limit: 30 });
+        const newItems = res.data.filter((m) => !seasonal.some((s) => s.id === m.id));
+        setSeasonal((prev) => [...prev, ...newItems]);
+      } else if (catId === "topAnime") {
+        const nextPage = Math.floor(topAnime.length / 25) + 1;
+        const res = await fetchTopDetailed("anime", { page: nextPage, limit: 30 });
+        const newItems = res.data.filter((m) => !topAnime.some((s) => s.id === m.id));
+        setTopAnime((prev) => [...prev, ...newItems]);
+      } else if (catId === "topMovies") {
+        const nextPage = Math.floor(topMovies.length / 25) + 1;
+        const res = await fetchTopDetailed("anime", { filter: "movie", page: nextPage, limit: 30 });
+        const newItems = res.data.filter((m) => !topMovies.some((s) => s.id === m.id));
+        setTopMovies((prev) => [...prev, ...newItems]);
+      } else if (catId === "actionAnime") {
+        const nextPage = Math.floor(actionAnime.length / 25) + 1;
+        const res = await searchMedia("anime", "", { genres: "Action", page: nextPage, limit: 30 });
+        const newItems = (res.data || []).filter((m) => !actionAnime.some((s) => s.id === m.id));
+        setActionAnime((prev) => [...prev, ...newItems]);
+      } else if (catId === "psychAnime") {
+        const nextPage = Math.floor(psychAnime.length / 25) + 1;
+        const res = await searchMedia("anime", "", { genres: "Psychological", page: nextPage, limit: 30 });
+        const newItems = (res.data || []).filter((m) => !psychAnime.some((s) => s.id === m.id));
+        setPsychAnime((prev) => [...prev, ...newItems]);
+      } else if (catId === "topManga") {
+        const nextPage = Math.floor(topManga.length / 25) + 1;
+        const res = await fetchTopDetailed("manga", { page: nextPage, limit: 30 });
+        const newItems = res.data.filter((m) => !topManga.some((s) => s.id === m.id));
+        setTopManga((prev) => [...prev, ...newItems]);
+      } else if (catId === "topNovels") {
+        const nextPage = Math.floor(topNovels.length / 25) + 1;
+        const res = await fetchTopDetailed("manga", { filter: "novels", page: nextPage, limit: 30 });
+        const newItems = res.data.filter((m) => !topNovels.some((s) => s.id === m.id));
+        setTopNovels((prev) => [...prev, ...newItems]);
+      } else if (catId === "actionManga") {
+        const nextPage = Math.floor(actionManga.length / 25) + 1;
+        const res = await searchMedia("manga", "", { genres: "Action", page: nextPage, limit: 30 });
+        const newItems = (res.data || []).filter((m) => !actionManga.some((s) => s.id === m.id));
+        setActionManga((prev) => [...prev, ...newItems]);
+      } else if (catId === "romanceManga") {
+        const nextPage = Math.floor(romanceManga.length / 25) + 1;
+        const res = await searchMedia("manga", "", { genres: "Romance", page: nextPage, limit: 30 });
+        const newItems = (res.data || []).filter((m) => !romanceManga.some((s) => s.id === m.id));
+        setRomanceManga((prev) => [...prev, ...newItems]);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingBatchCategory(null);
+    }
+  };
 
   useEffect(() => {
     return loadDiscovery();
@@ -1863,6 +2172,7 @@ function ExploreView({
               onClick={() => {
                 setActiveType("anime");
                 setActiveFormat("");
+                setActiveCategoryView(null);
               }}
             >
               Anime Catalog
@@ -1873,6 +2183,7 @@ function ExploreView({
               onClick={() => {
                 setActiveType("manga");
                 setActiveFormat("");
+                setActiveCategoryView(null);
               }}
             >
               Manga Catalog
@@ -2092,114 +2403,256 @@ function ExploreView({
 
       {/* ── Main Viewport Content ── */}
       {!isSearchMode ? (
-        <>
-          {/* 1. Custom Interactive Full-Width Hero Slider */}
-          {loadingTop && !spotlights.length ? (
-            <div className="skeleton-card" style={{ height: "320px", marginBottom: "24px" }} />
-          ) : topError && !spotlights.length ? (
-            <div className="empty-state">
-              <div className="empty-title">Catalog Temporarily Offline</div>
-              <div className="empty-sub">Unable to connect to discovery upstream. Click to reload.</div>
-              <button className="empty-action" type="button" onClick={loadDiscovery}>
-                Retry Loading
-              </button>
-            </div>
-          ) : (
-            <CustomHeroSlider
-              spotlights={spotlights}
-              onAdd={onAdd}
-              onDetail={onDetail}
-            />
-          )}
+        activeCategoryView ? (
+          <DedicatedCategoryView
+            category={activeCategoryView}
+            entryMap={entryMap}
+            onAdd={onAdd}
+            onDetail={onDetail}
+            onBack={() => setActiveCategoryView(null)}
+          />
+        ) : (
+          <>
+            {/* 1. Custom Interactive Full-Width Hero Slider */}
+            {loadingTop && !spotlights.length ? (
+              <div className="skeleton-card" style={{ height: "480px", marginBottom: "24px" }} />
+            ) : topError && !spotlights.length ? (
+              <div className="empty-state">
+                <div className="empty-title">Catalog Temporarily Offline</div>
+                <div className="empty-sub">Unable to connect to discovery upstream. Click to reload.</div>
+                <button className="empty-action" type="button" onClick={loadDiscovery}>
+                  Retry Loading
+                </button>
+              </div>
+            ) : (
+              <CustomHeroSlider
+                spotlights={spotlights}
+                onAdd={onAdd}
+                onDetail={onDetail}
+              />
+            )}
 
-          {/* 2. Structured Multi-Row & Multi-Column Categorized Sections */}
-          {isAnime ? (
-            <>
-              {/* Category 01: Top Airing Releases */}
-              <ExploreCategorySection
-                title="Current Airing Broadcasts"
-                items={seasonal}
-                entryMap={entryMap}
-                onAdd={onAdd}
-                onDetail={onDetail}
-              />
+            {/* 2. Structured Multi-Row & Multi-Column Categorized Sections */}
+            {isAnime ? (
+              <>
+                {/* Category 01: Top Airing Releases */}
+                <ExploreCategorySection
+                  title="Current Airing Broadcasts"
+                  items={seasonal}
+                  entryMap={entryMap}
+                  onAdd={onAdd}
+                  onDetail={onDetail}
+                  onViewAll={() =>
+                    setActiveCategoryView({
+                      id: "anime-season",
+                      title: "Current Airing Broadcasts",
+                      subtitle: "Anime series currently broadcasting this season in Japan",
+                      kanji: "今期放送",
+                      type: "anime",
+                      categoryType: "season",
+                      initialItems: seasonal,
+                    })
+                  }
+                  onLoadMoreBatches={() => loadMoreBatches("seasonal")}
+                  hasMoreBatches={true}
+                  loadingMoreBatches={loadingBatchCategory === "seasonal"}
+                />
 
-              {/* Category 02: All-Time Masterpieces */}
-              <ExploreCategorySection
-                title="All-Time Titans & Masterpieces"
-                items={topAnime}
-                entryMap={entryMap}
-                onAdd={onAdd}
-                onDetail={onDetail}
-              />
+                {/* Category 02: All-Time Masterpieces */}
+                <ExploreCategorySection
+                  title="All-Time Titans & Masterpieces"
+                  items={topAnime}
+                  entryMap={entryMap}
+                  onAdd={onAdd}
+                  onDetail={onDetail}
+                  onViewAll={() =>
+                    setActiveCategoryView({
+                      id: "anime-top",
+                      title: "All-Time Titans & Masterpieces",
+                      subtitle: "The highest rated and most celebrated anime series of all time",
+                      kanji: "最高傑作",
+                      type: "anime",
+                      categoryType: "top",
+                      initialItems: topAnime,
+                    })
+                  }
+                  onLoadMoreBatches={() => loadMoreBatches("topAnime")}
+                  hasMoreBatches={true}
+                  loadingMoreBatches={loadingBatchCategory === "topAnime"}
+                />
 
-              {/* Category 03: Feature Films & Specials */}
-              <ExploreCategorySection
-                title="Feature Films & Cinematic Specials"
-                items={topMovies}
-                entryMap={entryMap}
-                onAdd={onAdd}
-                onDetail={onDetail}
-              />
+                {/* Category 03: Feature Films & Specials */}
+                <ExploreCategorySection
+                  title="Feature Films & Cinematic Specials"
+                  items={topMovies}
+                  entryMap={entryMap}
+                  onAdd={onAdd}
+                  onDetail={onDetail}
+                  onViewAll={() =>
+                    setActiveCategoryView({
+                      id: "anime-movies",
+                      title: "Feature Films & Cinematic Specials",
+                      subtitle: "Award-winning animated theatrical films and standalone cinematic features",
+                      kanji: "劇場版",
+                      type: "anime",
+                      categoryType: "top-filter",
+                      filter: "movie",
+                      initialItems: topMovies,
+                    })
+                  }
+                  onLoadMoreBatches={() => loadMoreBatches("topMovies")}
+                  hasMoreBatches={true}
+                  loadingMoreBatches={loadingBatchCategory === "topMovies"}
+                />
 
-              {/* Category 04: High-Octane Action & Shonen */}
-              <ExploreCategorySection
-                title="High-Octane Action & Shonen"
-                items={actionAnime}
-                entryMap={entryMap}
-                onAdd={onAdd}
-                onDetail={onDetail}
-              />
+                {/* Category 04: High-Octane Action & Shonen */}
+                <ExploreCategorySection
+                  title="High-Octane Action & Shonen"
+                  items={actionAnime}
+                  entryMap={entryMap}
+                  onAdd={onAdd}
+                  onDetail={onDetail}
+                  onViewAll={() =>
+                    setActiveCategoryView({
+                      id: "anime-action",
+                      title: "High-Octane Action & Shonen",
+                      subtitle: "Adrenaline-fueled battles, epic martial arts, and heroic shonen sagas",
+                      kanji: "少年バトル",
+                      type: "anime",
+                      categoryType: "genre",
+                      genre: "Action",
+                      initialItems: actionAnime,
+                    })
+                  }
+                  onLoadMoreBatches={() => loadMoreBatches("actionAnime")}
+                  hasMoreBatches={true}
+                  loadingMoreBatches={loadingBatchCategory === "actionAnime"}
+                />
 
-              {/* Category 05: Psychological & Dark Seinen */}
-              <ExploreCategorySection
-                title="Psychological & Dark Seinen"
-                items={psychAnime}
-                entryMap={entryMap}
-                onAdd={onAdd}
-                onDetail={onDetail}
-              />
-            </>
-          ) : (
-            <>
-              {/* Category 01: Top-Tier Manga Classics */}
-              <ExploreCategorySection
-                title="Top-Tier Manga Masterpieces"
-                items={topManga}
-                entryMap={entryMap}
-                onAdd={onAdd}
-                onDetail={onDetail}
-              />
+                {/* Category 05: Psychological & Dark Seinen */}
+                <ExploreCategorySection
+                  title="Psychological & Dark Seinen"
+                  items={psychAnime}
+                  entryMap={entryMap}
+                  onAdd={onAdd}
+                  onDetail={onDetail}
+                  onViewAll={() =>
+                    setActiveCategoryView({
+                      id: "anime-psych",
+                      title: "Psychological & Dark Seinen",
+                      subtitle: "Intricate mind games, psychological thrillers, and gritty adult dramas",
+                      kanji: "心理劇",
+                      type: "anime",
+                      categoryType: "genre",
+                      genre: "Psychological",
+                      initialItems: psychAnime,
+                    })
+                  }
+                  onLoadMoreBatches={() => loadMoreBatches("psychAnime")}
+                  hasMoreBatches={true}
+                  loadingMoreBatches={loadingBatchCategory === "psychAnime"}
+                />
+              </>
+            ) : (
+              <>
+                {/* Category 01: Top-Tier Manga Classics */}
+                <ExploreCategorySection
+                  title="Top-Tier Manga Masterpieces"
+                  items={topManga}
+                  entryMap={entryMap}
+                  onAdd={onAdd}
+                  onDetail={onDetail}
+                  onViewAll={() =>
+                    setActiveCategoryView({
+                      id: "manga-top",
+                      title: "Top-Tier Manga Masterpieces",
+                      subtitle: "Legendary manga series, classics, and critically acclaimed runs",
+                      kanji: "名作漫画",
+                      type: "manga",
+                      categoryType: "top",
+                      initialItems: topManga,
+                    })
+                  }
+                  onLoadMoreBatches={() => loadMoreBatches("topManga")}
+                  hasMoreBatches={true}
+                  loadingMoreBatches={loadingBatchCategory === "topManga"}
+                />
 
-              {/* Category 02: Light Novels & Web Serials */}
-              <ExploreCategorySection
-                title="Light Novels & Web Serials"
-                items={topNovels}
-                entryMap={entryMap}
-                onAdd={onAdd}
-                onDetail={onDetail}
-              />
+                {/* Category 02: Light Novels & Web Serials */}
+                <ExploreCategorySection
+                  title="Light Novels & Web Serials"
+                  items={topNovels}
+                  entryMap={entryMap}
+                  onAdd={onAdd}
+                  onDetail={onDetail}
+                  onViewAll={() =>
+                    setActiveCategoryView({
+                      id: "manga-novels",
+                      title: "Light Novels & Web Serials",
+                      subtitle: "Original light novels, literary fiction, and serialized web works",
+                      kanji: "連載小説",
+                      type: "manga",
+                      categoryType: "top-filter",
+                      filter: "novels",
+                      initialItems: topNovels,
+                    })
+                  }
+                  onLoadMoreBatches={() => loadMoreBatches("topNovels")}
+                  hasMoreBatches={true}
+                  loadingMoreBatches={loadingBatchCategory === "topNovels"}
+                />
 
-              {/* Category 03: Action & Dark Fantasy Manga */}
-              <ExploreCategorySection
-                title="Action & Dark Fantasy Manga"
-                items={actionManga}
-                entryMap={entryMap}
-                onAdd={onAdd}
-                onDetail={onDetail}
-              />
+                {/* Category 03: Action & Dark Fantasy Manga */}
+                <ExploreCategorySection
+                  title="Action & Dark Fantasy Manga"
+                  items={actionManga}
+                  entryMap={entryMap}
+                  onAdd={onAdd}
+                  onDetail={onDetail}
+                  onViewAll={() =>
+                    setActiveCategoryView({
+                      id: "manga-action",
+                      title: "Action & Dark Fantasy Manga",
+                      subtitle: "Visceral battles, grim dark fantasy, and high-stakes epics",
+                      kanji: "連載異世界",
+                      type: "manga",
+                      categoryType: "genre",
+                      genre: "Action",
+                      initialItems: actionManga,
+                    })
+                  }
+                  onLoadMoreBatches={() => loadMoreBatches("actionManga")}
+                  hasMoreBatches={true}
+                  loadingMoreBatches={loadingBatchCategory === "actionManga"}
+                />
 
-              {/* Category 04: Romance & Character-Driven Manga */}
-              <ExploreCategorySection
-                title="Romance & Character-Driven Manga"
-                items={romanceManga}
-                entryMap={entryMap}
-                onAdd={onAdd}
-                onDetail={onDetail}
-              />
-            </>
-          )}
-        </>
+                {/* Category 04: Romance & Character-Driven Manga */}
+                <ExploreCategorySection
+                  title="Romance & Character-Driven Manga"
+                  items={romanceManga}
+                  entryMap={entryMap}
+                  onAdd={onAdd}
+                  onDetail={onDetail}
+                  onViewAll={() =>
+                    setActiveCategoryView({
+                      id: "manga-romance",
+                      title: "Romance & Character-Driven Manga",
+                      subtitle: "Heartfelt love stories, romantic comedies, and emotional character arcs",
+                      kanji: "恋愛物語",
+                      type: "manga",
+                      categoryType: "genre",
+                      genre: "Romance",
+                      initialItems: romanceManga,
+                    })
+                  }
+                  onLoadMoreBatches={() => loadMoreBatches("romanceManga")}
+                  hasMoreBatches={true}
+                  loadingMoreBatches={loadingBatchCategory === "romanceManga"}
+                />
+              </>
+            )}
+          </>
+        )
       ) : (
         <>
           {/* ── Search Results Grid ── */}
