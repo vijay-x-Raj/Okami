@@ -376,7 +376,7 @@ export default function MangaTrackerPage() {
 
   if (!Number.isFinite(mangaId)) {
     return (
-      <div className="detail-page">
+      <div className="detail-page theme-manga">
         <div className="detail-page-header">
           <Link className="back-link" href="/">
             Back to Library
@@ -390,7 +390,7 @@ export default function MangaTrackerPage() {
   }
 
   return (
-    <div className="detail-page">
+    <div className="detail-page theme-manga">
       <div className="detail-page-header">
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <Link className="back-link" href="/">
@@ -439,7 +439,7 @@ export default function MangaTrackerPage() {
                   style={{
                     height: "100%",
                     width: `${chapterPercent}%`,
-                    background: "var(--teal)",
+                    background: "var(--manga-accent)",
                     transition: "width 0.3s ease",
                   }}
                 />
@@ -517,18 +517,18 @@ export default function MangaTrackerPage() {
               >
                 {entry ? "In Library ✓" : "+ Add to Library"}
               </button>
-              <Link className="modal-btn ghost" href={`/manga/${media.id}/info`}>
-                Full Overview & Cast
+              <Link className="modal-btn secondary-manga" href={`/manga/${media.id}/info`}>
+                Full Overview &amp; Cast →
               </Link>
               {linkedAnimeSeason ? (
-                <Link className="modal-btn ghost" href={`/anime/${linkedAnimeSeason.malId}`}>
-                  Open Anime Tracker
+                <Link className="modal-btn secondary-anime" href={`/anime/${linkedAnimeSeason.malId}`}>
+                  Open Anime Tracker →
                 </Link>
               ) : null}
               <span className="detail-score">
                 <span className="detail-score-label">MAL Score</span>
                 <span className="detail-score-value">
-                  {media.official_score ? media.official_score.toFixed(1) : "--"}
+                  ★ {media.official_score ? media.official_score.toFixed(1) : "--"}
                 </span>
               </span>
             </div>
@@ -710,7 +710,7 @@ export default function MangaTrackerPage() {
                         onClick={() => toggleVolume(vol.volumeNumber)}
                         style={{
                           background: isRead ? "var(--surface-3)" : "var(--surface-2)",
-                          border: `1px solid ${isRead ? "var(--teal)" : "var(--border)"}`,
+                          border: `1px solid ${isRead ? "var(--manga-accent)" : "var(--border)"}`,
                           borderRadius: 4,
                           padding: 6,
                           cursor: "pointer",
@@ -740,8 +740,8 @@ export default function MangaTrackerPage() {
                               width: 20,
                               height: 20,
                               borderRadius: "50%",
-                              background: isRead ? "var(--teal)" : "rgba(0,0,0,0.6)",
-                              color: "#fff",
+                              background: isRead ? "var(--manga-accent)" : "rgba(0,0,0,0.6)",
+                              color: isRead ? "#041B16" : "#fff",
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
@@ -881,7 +881,7 @@ export default function MangaTrackerPage() {
                               {otherManga.type} • {otherManga.year || "--"}
                             </div>
                           </div>
-                          <Link className="franchise-node-action" href={`/manga/${otherManga.malId}`}>
+                          <Link className="franchise-node-action manga" href={`/manga/${otherManga.malId}`}>
                             Switch →
                           </Link>
                         </div>
@@ -899,7 +899,7 @@ export default function MangaTrackerPage() {
                         </div>
                       </div>
                       <Link
-                        className="franchise-node-action"
+                        className="franchise-node-action manga"
                         href={`/manga/${item.mal_id}`}
                         title={`View ${item.name}`}
                       >

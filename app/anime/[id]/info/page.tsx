@@ -224,7 +224,7 @@ export default function AnimeInfoPage() {
 
   if (!Number.isFinite(animeId)) {
     return (
-      <div className="detail-page">
+      <div className="detail-page theme-anime">
         <div className="detail-page-header">
           <Link className="back-link" href="/">
             Back to Library
@@ -238,7 +238,7 @@ export default function AnimeInfoPage() {
   }
 
   return (
-    <div className="detail-page">
+    <div className="detail-page theme-anime">
       <div className="detail-page-header">
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <Link className="back-link" href="/">

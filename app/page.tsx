@@ -167,9 +167,16 @@ function useOutsideClick(ref: RefObject<HTMLElement | null>, onClose: () => void
   }, [onClose, ref]);
 }
 
-function statusLabel(status: OkamiStatus) {
+function statusLabel(status: OkamiStatus, isManga?: boolean) {
+  if (isManga) {
+    if (status === "watching") return "Reading";
+    if (status === "plan_to_watch") return "Plan to Read";
+  } else {
+    if (status === "watching") return "Watching";
+    if (status === "plan_to_watch") return "Plan to Watch";
+  }
   const match = statusOptions.find((option) => option.value === status);
-  return match?.label ?? "Plan to Watch / Read";
+  return match?.label ?? (isManga ? "Plan to Read" : "Plan to Watch");
 }
 
 function statusClass(status: OkamiStatus) {
@@ -591,17 +598,20 @@ function EntryMenu({
 function TriStateFilterChip({
   label,
   state = "neutral",
+  variant,
   onClick,
 }: {
   label: string;
   state?: TriState;
+  variant?: "anime" | "manga";
   onClick: () => void;
 }) {
   const icon = state === "include" ? "✓ " : state === "exclude" ? "✕ " : "";
+  const variantClass = variant ? `variant-${variant}` : "";
   return (
     <button
       type="button"
-      className={`tri-state-chip state-${state}`}
+      className={`tri-state-chip state-${state} ${variantClass}`}
       onClick={onClick}
       title={`${label}: ${state} (Click to cycle)`}
     >
@@ -903,12 +913,12 @@ function LibraryView({
 
       {/* ── Mihon-Inspired Statistics Summary Cards ── */}
       <div className="stats-summary-grid">
-        <div className="stats-summary-card">
+        <div className="stats-summary-card stats-anime">
           <span className="stats-card-label">Episodes Watched</span>
           <span className="stats-card-value">{stats.totalEpisodes.toLocaleString()}</span>
           <span className="stats-card-sub">≈ {stats.daysWatched} Days Total</span>
         </div>
-        <div className="stats-summary-card">
+        <div className="stats-summary-card stats-manga">
           <span className="stats-card-label">Chapters Read</span>
           <span className="stats-card-value">{stats.totalChapters.toLocaleString()}</span>
           <span className="stats-card-sub">{stats.totalVolumes} Volumes Tracked</span>
@@ -964,7 +974,7 @@ function LibraryView({
                 )}
                 <div className="activity-card-info">
                   <div className="activity-card-title">{h.title}</div>
-                  <div className="activity-card-meta">
+                  <div className={`activity-card-meta ${h.mediaType === "manga" ? "manga" : "anime"}`}>
                     <span>{h.mediaType === "anime" ? `Episode ${h.number}` : `Chapter ${h.number}`}</span>
                   </div>
                   <div className="activity-card-time">{formatRelativeTime(h.timestamp)}</div>
@@ -1035,6 +1045,7 @@ function LibraryView({
             <TriStateFilterChip
               key={item.value}
               label={item.label}
+              variant={item.value === "manga" ? "manga" : item.value === "anime" ? "anime" : undefined}
               state={typeTriState[item.value] || "neutral"}
               onClick={() => {
                 setTypeTriState((prev) => ({
@@ -1130,7 +1141,7 @@ function LibraryView({
 
             return (
               <article
-                className={`card ${item.isFolder ? "is-folder" : ""}`}
+                className={`card ${item.isFolder ? "is-folder" : ""} ${isManga ? "card-manga" : "card-anime"}`}
                 key={item.id}
                 onMouseEnter={() => {
                   if (!item.isFolder) {
@@ -1283,7 +1294,7 @@ function LibraryView({
                       ? `★ ${item.averageOfficialScore ? item.averageOfficialScore.toFixed(1) : item.official_score.toFixed(1)} Avg`
                       : formatScore(item.official_score)}
                   </div>
-                  <div className={`status-badge ${statusClass(item.status)}`}>{statusLabel(item.status)}</div>
+                  <div className={`status-badge ${statusClass(item.status)}`}>{statusLabel(item.status, isManga)}</div>
                 </div>
                 <div className="card-info">
                   {item.isFolder ? (
@@ -1427,7 +1438,7 @@ function LibraryView({
                     ? `★ ${item.averageOfficialScore ? item.averageOfficialScore.toFixed(1) : item.official_score.toFixed(1)} Avg`
                     : formatScore(item.official_score)}
                 </span>
-                <span className={`status-chip ${statusClass(item.status)}`}>{statusLabel(item.status)}</span>
+                <span className={`status-chip ${statusClass(item.status)}`}>{statusLabel(item.status, item.type === "manga")}</span>
                 <span className="mono">
                   {item.isFolder ? `${item.completedCount}/${item.itemCount} Done` : item.progressLabel}
                 </span>
@@ -2795,7 +2806,7 @@ function ExploreView({
     (activeSort !== "trending" ? 1 : 0);
 
   return (
-    <div className="explore-view">
+    <div className={`explore-view ${activeType === "manga" ? "theme-manga" : "theme-anime"}`}>
       {/* ── Page Header ── */}
       <div className="page-header">
         <div className="page-title-row">
@@ -2832,7 +2843,7 @@ function ExploreView({
                 borderColor: isMultiSelect ? "var(--accent)" : "var(--border)",
                 color: isMultiSelect ? "var(--accent)" : "var(--text-2)",
                 fontWeight: isMultiSelect ? 700 : 500,
-                background: isMultiSelect ? "rgba(232, 25, 75, 0.15)" : "var(--surface-2)",
+                background: isMultiSelect ? "var(--accent-dim)" : "var(--surface-2)",
               }}
               onClick={() => {
                 setIsMultiSelect(!isMultiSelect);
@@ -4856,13 +4867,21 @@ function AddEntryModal({
 
   return (
     <div className="update-drawer-overlay" onClick={onClose}>
-      <aside className="update-drawer-panel" onClick={(e) => e.stopPropagation()}>
+      <aside className={`update-drawer-panel ${isManga ? "theme-manga" : "theme-anime"}`} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="update-drawer-header">
           <div>
-            <div className="update-drawer-eyebrow">{"// OKAMI TRACKER SYSTEM"}</div>
+            <div className="update-drawer-eyebrow">
+              {isManga ? "// OKAMI MANGA TRACKER" : "// OKAMI ANIME TRACKER"}
+            </div>
             <h2 className="update-drawer-title">
-              {entry ? "UPDATE ENTRY" : "ADD TO LIBRARY"}
+              {entry
+                ? isManga
+                  ? "UPDATE MANGA ENTRY"
+                  : "UPDATE ANIME ENTRY"
+                : isManga
+                  ? "ADD MANGA TO LIBRARY"
+                  : "ADD ANIME TO LIBRARY"}
             </h2>
           </div>
           <button
@@ -6048,12 +6067,12 @@ export default function Home() {
         </div>
       </aside>
 
-      <main className="main">
+      <main className={`main ${activeTab === "Manga" ? "theme-manga" : "theme-anime"}`}>
         <div className="topbar">
           {["Anime", "Manga"].map((tab) => (
             <button
               key={tab}
-              className={`topbar-tab ${activeTab === tab ? "active" : ""}`}
+              className={`topbar-tab ${tab === "Manga" ? "manga-tab" : "anime-tab"} ${activeTab === tab ? "active" : ""}`}
               type="button"
               onClick={() => {
                 setActiveTab(tab);
