@@ -1,6 +1,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
+  color-scheme: dark;
   --base:        #0D0D12;
   --surface-1:   #111118;
   --surface-2:   #17171F;
@@ -416,6 +417,8 @@ img { display: block; max-width: 100%; }
 .card-action-btn.in-library { background: var(--teal); border-color: var(--teal); color: #003028; }
 
 /* Manga Card Variant Overrides */
+.card-manga .card-action-btn.primary,
+.theme-manga .card-action-btn.primary,
 .card-manga .card-action-btn.quick-plus,
 .theme-manga .card-action-btn.quick-plus {
   background: var(--manga-accent);
@@ -423,6 +426,10 @@ img { display: block; max-width: 100%; }
   color: #FFFFFF;
   font-weight: 700;
 }
+.card-manga .card-action-btn.primary:hover,
+.theme-manga .card-action-btn.primary:hover,
+.card-manga .card-action-btn:hover,
+.theme-manga .card-action-btn:hover,
 .card-manga .card-action-btn.quick-plus:hover,
 .theme-manga .card-action-btn.quick-plus:hover {
   background: var(--manga-accent-hover);
@@ -533,61 +540,74 @@ img { display: block; max-width: 100%; }
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
-/* Status variants for .status-chip */
+/* Status variants for .status-chip - high-contrast opaque dark backgrounds */
 .status-chip.watching {
-  background: rgba(232, 25, 75, 0.15);
+  background-color: #26121B;
   color: #FF5A7E;
   border-color: rgba(232, 25, 75, 0.45);
 }
 .theme-manga .status-chip.watching,
 .status-chip.watching.manga,
 .status-chip.reading {
-  background: rgba(37, 99, 235, 0.16);
+  background-color: #111D33;
   color: #60A5FA;
   border-color: rgba(59, 130, 246, 0.45);
 }
 .status-chip.completed {
-  background: rgba(61, 184, 156, 0.15);
+  background-color: #122622;
   color: #3DB89C;
   border-color: rgba(61, 184, 156, 0.40);
 }
 .status-chip.hold {
-  background: rgba(196, 168, 79, 0.15);
+  background-color: #272214;
   color: #F5D565;
   border-color: rgba(196, 168, 79, 0.45);
 }
 .status-chip.dropped {
-  background: rgba(110, 108, 128, 0.18);
+  background-color: #1F1F27;
   color: #A09EB0;
   border-color: rgba(110, 108, 128, 0.35);
 }
 .status-chip.plan {
-  background: rgba(45, 59, 82, 0.28);
+  background-color: #18202C;
   color: #94A3B8;
   border-color: rgba(75, 95, 128, 0.40);
 }
 
-/* Interactive <select> Dropdown Variant */
+/* Interactive <select> Dropdown Variant - Pure dark mode, zero browser white bleed */
 select.status-chip,
 .status-chip.status-select {
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  appearance: none;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+  color-scheme: dark !important;
   cursor: pointer;
   outline: none;
   padding: 4px 22px 4px 9px;
   height: 24px;
-  background-repeat: no-repeat;
-  background-position: right 7px center;
-  background-size: 8px 5px;
+  background-repeat: no-repeat !important;
+  background-position: right 7px center !important;
+  background-size: 8px 5px !important;
   text-align: left;
   user-select: none;
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border-radius: 3px;
+  border-width: 1px;
+  border-style: solid;
+  box-sizing: border-box;
 }
 
-/* Custom SVG Dropdown Chevron matching each status */
+/* Custom SVG Dropdown Chevron and explicit solid colors (prevents light-mode white bleed in Chromium) */
 select.status-chip.watching,
 .status-chip.status-select.watching {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%23FF5A7E' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-color: #26121B !important;
+  color: #FF5A7E !important;
+  border-color: rgba(232, 25, 75, 0.5) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%23FF5A7E' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
 }
 .theme-manga select.status-chip.watching,
 .theme-manga .status-chip.status-select.watching,
@@ -595,29 +615,44 @@ select.status-chip.watching.manga,
 .status-chip.status-select.watching.manga,
 select.status-chip.reading,
 .status-chip.status-select.reading {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%2360A5FA' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-color: #111D33 !important;
+  color: #60A5FA !important;
+  border-color: rgba(59, 130, 246, 0.5) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%2360A5FA' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
 }
 select.status-chip.completed,
 .status-chip.status-select.completed {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%233DB89C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-color: #122622 !important;
+  color: #3DB89C !important;
+  border-color: rgba(61, 184, 156, 0.45) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%233DB89C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
 }
 select.status-chip.hold,
 .status-chip.status-select.hold {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%23F5D565' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-color: #272214 !important;
+  color: #F5D565 !important;
+  border-color: rgba(196, 168, 79, 0.5) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%23F5D565' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
 }
 select.status-chip.dropped,
 .status-chip.status-select.dropped {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%23A09EB0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-color: #1F1F27 !important;
+  color: #A09EB0 !important;
+  border-color: rgba(110, 108, 128, 0.45) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%23A09EB0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
 }
 select.status-chip.plan,
 .status-chip.status-select.plan {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%2394A3B8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-color: #18202C !important;
+  color: #94A3B8 !important;
+  border-color: rgba(75, 95, 128, 0.45) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5' fill='none'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%2394A3B8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
 }
 
 /* Hover & Focus States */
 select.status-chip:hover,
 .status-chip.status-select:hover {
-  filter: brightness(1.15);
+  filter: brightness(1.2);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 }
 select.status-chip:focus-visible,
@@ -629,8 +664,8 @@ select.status-chip:focus-visible,
 /* Options dropdown menu styling */
 select.status-chip option,
 .status-chip.status-select option {
-  background: var(--surface-2);
-  color: var(--text-1);
+  background-color: #17171F !important;
+  color: #ECEAF5 !important;
   font-family: var(--font-mono, "IBM Plex Mono", monospace);
   font-size: 11px;
   font-weight: 600;
@@ -2604,6 +2639,11 @@ body::after {
   color: #fff;
   transform: translateY(-1px);
 }
+.theme-manga .load-more-btn:hover:not(:disabled) {
+  background: var(--manga-accent);
+  border-color: var(--manga-accent);
+  color: #FFFFFF;
+}
 .load-more-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -2724,6 +2764,11 @@ body::after {
   color: #fff;
   border-color: var(--accent);
 }
+.theme-manga .explore-slider-btn:hover {
+  background: var(--manga-accent);
+  color: #FFFFFF;
+  border-color: var(--manga-accent);
+}
 .explore-slider-indicator {
   font-family: var(--font-mono, "IBM Plex Mono", monospace);
   font-size: 10px;
@@ -2741,6 +2786,9 @@ body::after {
 .explore-slider-dot.active {
   background: var(--accent);
   transform: scale(1.2);
+}
+.theme-manga .explore-slider-dot.active {
+  background: var(--manga-accent);
 }
 
 /* Category Sections & Header with Batch Slider */
@@ -2780,8 +2828,8 @@ body::after {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  background: rgba(232, 25, 75, 0.08);
-  border: 1px solid rgba(232, 25, 75, 0.35);
+  background: var(--accent-dim);
+  border: 1px solid var(--border-hi);
   border-radius: 3px;
   font-family: var(--font-mono, "IBM Plex Mono", monospace);
   font-size: 10px;
@@ -2795,6 +2843,20 @@ body::after {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
+}
+.theme-manga .explore-view-all-btn {
+  background: var(--manga-accent-dim);
+  border-color: var(--manga-border-hi);
+  color: var(--manga-accent-light);
+}
+.theme-manga .explore-view-all-btn:hover {
+  background: var(--manga-accent);
+  border-color: var(--manga-accent);
+  color: #FFFFFF;
+}
+.theme-manga .trending-badge-viral {
+  background: var(--manga-accent) !important;
+  color: #FFFFFF !important;
 }
 .explore-batch-nav {
   display: flex;
@@ -2817,6 +2879,11 @@ body::after {
   background: var(--surface-3);
   color: var(--text-1);
   border-color: var(--border-hi);
+}
+.theme-manga .explore-batch-btn:hover:not(:disabled) {
+  background: var(--manga-accent-dim);
+  border-color: var(--manga-accent);
+  color: var(--manga-accent-light);
 }
 .explore-batch-btn:disabled {
   opacity: 0.3;
@@ -4242,15 +4309,15 @@ body::after {
 }
 
 .update-media-badge.anime {
-  background: rgba(232, 25, 75, 0.15);
-  border-color: rgba(232, 25, 75, 0.4);
-  color: var(--accent);
+  background: var(--anime-accent-dim);
+  border-color: var(--anime-border-hi);
+  color: var(--anime-accent);
 }
 
 .update-media-badge.manga {
-  background: rgba(61, 184, 156, 0.15);
-  border-color: rgba(61, 184, 156, 0.4);
-  color: var(--teal);
+  background: var(--manga-accent-dim);
+  border-color: var(--manga-border-hi);
+  color: var(--manga-accent-light);
 }
 
 .update-media-meta-tag {

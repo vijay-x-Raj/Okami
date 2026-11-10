@@ -1602,7 +1602,7 @@ function ExploreMediaCard({
 
   return (
     <article
-      className={`card ${isSelected ? "multi-selected" : ""}`}
+      className={`card ${isSelected ? "multi-selected" : ""} ${media.type === "manga" ? "card-manga" : "card-anime"}`}
       key={mediaKey(media)}
       onMouseEnter={() => prefetchMedia(media.type, media.id)}
     >
@@ -1778,6 +1778,7 @@ function ExploreCategorySection({
           <h3 className="section-title" style={{ margin: 0 }}>{title}</h3>
           {title.toLowerCase().includes("trending") && (
             <span
+              className="trending-badge-viral"
               style={{
                 fontFamily: "var(--font-mono, monospace)",
                 fontSize: "9px",
@@ -3545,6 +3546,7 @@ function ExploreView({
 function MyListView({
   entries,
   franchises,
+  activeType = "anime",
   onEdit,
   onRemove,
   onToggleFavourite,
@@ -3556,6 +3558,7 @@ function MyListView({
 }: {
   entries: OkamiEntry[];
   franchises: Record<string, UnifiedFranchiseEntry>;
+  activeType?: "anime" | "manga";
   onEdit: (entry: OkamiEntry) => void;
   onRemove: (entry: OkamiEntry) => void;
   onToggleFavourite: (entry: OkamiEntry) => void;
@@ -3565,18 +3568,18 @@ function MyListView({
   onOpenFolder?: (item: UnifiedLibraryItem) => void;
   onExplore: () => void;
 }) {
+  const isManga = activeType === "manga";
   const [activeTab, setActiveTab] = useState<string>("All");
-  const [activeType, setActiveType] = useState<"all" | "anime" | "manga">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<"index" | "title" | "user_score" | "official_score" | "status" | "progress" | "date_added">("date_added");
   const [sortAsc, setSortAsc] = useState<boolean>(false);
   const [editingProgressKey, setEditingProgressKey] = useState<string | null>(null);
   const [editingProgressVal, setEditingProgressVal] = useState<number>(0);
 
-  // Build unified items from both franchises and standalone entries
+  // Build unified items strictly filtered by active media type (zero anime/manga collision)
   const unifiedItems = useMemo(
-    () => buildUnifiedLibraryItems(franchises, entries),
-    [franchises, entries]
+    () => buildUnifiedLibraryItems(franchises, entries).filter((item) => item.type === activeType),
+    [franchises, entries, activeType]
   );
 
   // Helper to convert UnifiedLibraryItem to OkamiEntry for edit / remove / favourite
@@ -3849,23 +3852,17 @@ function MyListView({
 
   const statusTabs = [
     { key: "All", label: "All", count: unifiedItems.length },
-    { key: "watching", label: "Watching / Reading", count: tabCounts.watching },
+    { key: "watching", label: isManga ? "Reading" : "Watching", count: tabCounts.watching },
     { key: "completed", label: "Completed", count: tabCounts.completed },
     { key: "on_hold", label: "On Hold", count: tabCounts.on_hold },
     { key: "dropped", label: "Dropped", count: tabCounts.dropped },
-    { key: "plan_to_watch", label: "Plan to Watch / Read", count: tabCounts.plan },
+    { key: "plan_to_watch", label: isManga ? "Plan to Read" : "Plan to Watch", count: tabCounts.plan },
     { key: "favourites", label: "Favourites", count: tabCounts.favourites },
   ];
 
   // Filtered & sorted items
   const filteredItems = useMemo(() => {
     let list = [...unifiedItems];
-
-    if (activeType === "anime") {
-      list = list.filter((item) => item.type === "anime");
-    } else if (activeType === "manga") {
-      list = list.filter((item) => item.type === "manga");
-    }
 
     if (activeTab === "favourites") {
       list = list.filter((item) => item.is_favourite);
@@ -4179,21 +4176,8 @@ function MyListView({
           )}
         </div>
 
-        <div className="mylist-type-pills">
-          {(["all", "anime", "manga"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              className={`mylist-type-pill ${activeType === t ? "active" : ""}`}
-              onClick={() => setActiveType(t)}
-            >
-              {t === "all" ? "All Media" : t === "anime" ? "Anime Only" : "Manga Only"}
-            </button>
-          ))}
-        </div>
-
         <div className="mylist-count-badge">
-          Showing {filteredItems.length} of {unifiedItems.length}
+          Showing {filteredItems.length} of {unifiedItems.length} {isManga ? "manga entries" : "anime entries"}
         </div>
       </div>
 
@@ -4251,7 +4235,6 @@ function MyListView({
                 onClick={() => {
                   setSearchQuery("");
                   setActiveTab("All");
-                  setActiveType("all");
                 }}
               >
                 Reset Filters
@@ -5681,13 +5664,35 @@ function DetailPanel({
 export default function Home() {
   const router = useRouter();
   const [activeNav, setActiveNav] = useState("Library");
-  const [activeTab, setActiveTab] = useState("Anime");
+  const [activeTab, setActiveTab] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("okami_active_tab");
+      if (saved === "Manga" || saved === "Anime") return saved;
+    }
+    return "Anime";
+  });
   const [activeView, setActiveView] = useState<"grid" | "list">("grid");
-  const [activeType, setActiveType] = useState<"all" | "anime" | "manga" | "films" | "folders">("all");
+  const [activeType, setActiveType] = useState<"anime" | "manga">(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("okami_active_tab");
+      if (saved === "Manga") return "manga";
+    }
+    return "anime";
+  });
   const [activeGenre, setActiveGenre] = useState("");
   const [activeStatus, setActiveStatus] = useState<OkamiStatus | "favorites" | "">("");
   const [sortBy, setSortBy] = useState<(typeof sortOptions)[number]>("Last Updated");
   const [openFolderItem, setOpenFolderItem] = useState<UnifiedLibraryItem | null>(null);
+
+  const handleTabChange = useCallback((tab: string) => {
+    setActiveTab(tab);
+    const mediaType = tab.toLowerCase() === "manga" ? "manga" : "anime";
+    setActiveType(mediaType);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("okami_active_tab", tab);
+      document.documentElement.setAttribute("data-theme", mediaType);
+    }
+  }, []);
 
   const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
   const [franchises, setFranchises] = useState<Record<string, UnifiedFranchiseEntry>>(() => {
@@ -5700,6 +5705,14 @@ export default function Home() {
     Promise.resolve().then(() => {
       setFranchises(loadFranchiseEntries());
     });
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("okami_active_tab");
+      const currentTab = saved === "Manga" || saved === "Anime" ? saved : "Anime";
+      const mediaType = currentTab.toLowerCase() === "manga" ? "manga" : "anime";
+      setActiveTab(currentTab);
+      setActiveType(mediaType);
+      document.documentElement.setAttribute("data-theme", mediaType);
+    }
   }, []);
 
   const commitEntries = useCallback((next: OkamiEntry[]) => {
@@ -6070,7 +6083,7 @@ export default function Home() {
   };
 
   const clearLibraryFilters = () => {
-    setActiveType("all");
+    setActiveType(activeTab.toLowerCase() === "manga" ? "manga" : "anime");
     setActiveGenre("");
     setActiveStatus("");
   };
@@ -6112,10 +6125,7 @@ export default function Home() {
               key={tab}
               className={`topbar-tab ${tab === "Manga" ? "manga-tab" : "anime-tab"} ${activeTab === tab ? "active" : ""}`}
               type="button"
-              onClick={() => {
-                setActiveTab(tab);
-                setActiveType(tab.toLowerCase() as "all" | "anime" | "manga" | "films");
-              }}
+              onClick={() => handleTabChange(tab)}
               aria-pressed={activeTab === tab}
             >
               {tab}
@@ -6173,8 +6183,7 @@ export default function Home() {
                 <ExploreView
                   activeType={activeTab.toLowerCase() === "manga" ? "manga" : "anime"}
                   onTypeChange={(type) => {
-                    setActiveTab(type === "manga" ? "Manga" : "Anime");
-                    setActiveType(type);
+                    handleTabChange(type === "manga" ? "Manga" : "Anime");
                   }}
                   entryMap={entryMap}
                   entries={entries}
@@ -6189,6 +6198,7 @@ export default function Home() {
                 <MyListView
                   entries={entries}
                   franchises={franchises}
+                  activeType={activeTab.toLowerCase() === "manga" ? "manga" : "anime"}
                   onEdit={(entry) => setModalState({ media: entryToMedia(entry), entry })}
                   onRemove={handleRemoveEntry}
                   onToggleFavourite={handleToggleFavourite}
