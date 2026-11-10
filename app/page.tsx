@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { JikanEpisode, JikanRelation, MangaVolumeItem, MediaType, OkamiMedia } from "./lib/jikan";
 import { formatMediaNumberDisplay } from "./lib/jikan";
-import { fetchDetail, fetchEpisodes, fetchRelated, fetchSeason, fetchSeasonDetailed, fetchTop, fetchTopDetailed, fetchVolumes, searchMedia } from "./lib/api";
+import { fetchDetail, fetchEpisodes, fetchFranchiseGraph, fetchRelated, fetchSeason, fetchSeasonDetailed, fetchTop, fetchTopDetailed, fetchVolumes, searchMedia } from "./lib/api";
 import {
   addEntry,
   type OkamiEntry,
@@ -28,6 +28,8 @@ import {
   findFranchiseByMalId,
   getFranchiseDisplayInfo,
   type UnifiedFranchiseEntry,
+  type FranchiseItemOption,
+  bundleFranchiseEntries,
   TrackManager,
   type HistoryEntry,
   type CustomCategory,
@@ -246,6 +248,15 @@ function buildUnifiedLibraryItems(
 
   for (const franchise of Object.values(franchises)) {
     seenRoots.add(franchise.rootMalId);
+    if (Array.isArray(franchise.linkedMalIds)) {
+      franchise.linkedMalIds.forEach((id) => seenRoots.add(id));
+    }
+    if (franchise.anime?.seasons) {
+      Object.keys(franchise.anime.seasons).forEach((id) => seenRoots.add(Number(id)));
+    }
+    if (franchise.manga?.series) {
+      Object.keys(franchise.manga.series).forEach((id) => seenRoots.add(Number(id)));
+    }
     const displayInfo = getFranchiseDisplayInfo(franchise);
 
     const activeMalId =
@@ -254,7 +265,10 @@ function buildUnifiedLibraryItems(
         : (displayInfo.activeSeasonMalId || franchise.rootMalId);
 
     const matchingEntry = entries.find(
-      (e) => e.id === activeMalId || e.id === franchise.rootMalId
+      (e) =>
+        e.id === activeMalId ||
+        e.id === franchise.rootMalId ||
+        (Array.isArray(franchise.linkedMalIds) && franchise.linkedMalIds.includes(e.id))
     );
 
     const franchiseSeason =
@@ -1146,6 +1160,20 @@ function LibraryView({
                     <span>{item.year || "--"}</span>
                     <span className="meta-dot">•</span>
                     <span>{item.format}</span>
+                    {item.franchise &&
+                    (Object.keys(item.franchise.anime?.seasons || {}).length > 1 ||
+                      Object.keys(item.franchise.manga?.series || {}).length > 1) ? (
+                      <>
+                        <span className="meta-dot">•</span>
+                        <span className="franchise-part-count-pill">
+                          {Math.max(
+                            Object.keys(item.franchise.anime?.seasons || {}).length,
+                            Object.keys(item.franchise.manga?.series || {}).length
+                          )}{" "}
+                          Parts
+                        </span>
+                      </>
+                    ) : null}
                     {item.is_favourite ? (
                       <>
                         <span className="meta-dot">•</span>
@@ -3770,6 +3798,7 @@ function AddEntryModal({
     progress: number;
     completedSeasons: number[];
     completedVolumes: number[];
+    selectedFranchiseItems?: FranchiseItemOption[];
   }) => void;
 }) {
   const media = state?.media;
@@ -3786,6 +3815,11 @@ function AddEntryModal({
   const [notes, setNotes] = useState(() => entry?.notes ?? "");
   const [inputVal, setInputVal] = useState<string>(() => String(entry?.progress ?? 0));
 
+  // Multi-Select Franchise State
+  const [franchiseOptions, setFranchiseOptions] = useState<FranchiseItemOption[]>([]);
+  const [loadingFranchise, setLoadingFranchise] = useState<boolean>(true);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set(media ? [media.id] : []));
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -3794,12 +3828,165 @@ function AddEntryModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
+  // Load Franchise Relations for Multiselect
+  useEffect(() => {
+    if (!media) return;
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) setLoadingFranchise(true);
+    });
+
+    async function loadFranchise() {
+      if (!media) return;
+      try {
+        const graph = await fetchFranchiseGraph(media.id, media.type).catch(() => null);
+        if (!active) return;
+
+        const options: FranchiseItemOption[] = [];
+        const seen = new Set<number>();
+
+        // Always include current media first
+        const currentOpt: FranchiseItemOption = {
+          id: media.id,
+          title: media.title,
+          type: media.type,
+          format: media.format || (media.type === "manga" ? "Manga" : "TV"),
+          total: media.total ?? null,
+          cover: media.cover,
+          relation: "Current Selection",
+          isCurrent: true,
+        };
+        options.push(currentOpt);
+        seen.add(media.id);
+
+        if (graph) {
+          if (Array.isArray(graph.seasons)) {
+            for (const s of graph.seasons) {
+              if (!seen.has(s.malId)) {
+                seen.add(s.malId);
+                options.push({
+                  id: s.malId,
+                  title: s.title,
+                  type: "anime",
+                  format: s.type || "TV",
+                  seasonNumber: s.seasonNumber,
+                  total: s.episodes || null,
+                  cover: s.cover || media.cover,
+                  relation: `Season ${s.seasonNumber}`,
+                });
+              }
+            }
+          }
+          if (Array.isArray(graph.extras)) {
+            for (const e of graph.extras) {
+              if (!seen.has(e.malId)) {
+                seen.add(e.malId);
+                options.push({
+                  id: e.malId,
+                  title: e.title,
+                  type: "anime",
+                  format: e.type || "Movie",
+                  total: e.episodes || null,
+                  cover: e.cover || media.cover,
+                  relation: e.type || "Special",
+                });
+              }
+            }
+          }
+          if (Array.isArray(graph.adaptations)) {
+            for (const a of graph.adaptations) {
+              if (!seen.has(a.malId)) {
+                seen.add(a.malId);
+                options.push({
+                  id: a.malId,
+                  title: a.title,
+                  type: "manga",
+                  format: a.type || "Manga",
+                  total: a.chapters || null,
+                  cover: a.cover || media.cover,
+                  relation: a.type || "Adaptation",
+                });
+              }
+            }
+          }
+        }
+
+        if (options.length <= 1) {
+          try {
+            const relatedList = await fetchRelated(media.type, media.id).catch(() => []);
+            if (active && Array.isArray(relatedList)) {
+              for (const rel of relatedList) {
+                const relName = rel.relation || "Related";
+                for (const item of rel.entry || []) {
+                  if (!seen.has(item.mal_id)) {
+                    seen.add(item.mal_id);
+                    options.push({
+                      id: item.mal_id,
+                      title: item.name || "Untitled",
+                      type: item.type === "manga" ? "manga" : "anime",
+                      format: item.type === "manga" ? "Manga" : "Anime",
+                      total: null,
+                      cover: media.cover,
+                      relation: relName,
+                    });
+                  }
+                }
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (active) {
+          setFranchiseOptions(options);
+
+          // Check if already in an existing franchise to preselect linked IDs
+          const existing = findFranchiseByMalId(loadFranchiseEntries(), media.id);
+          if (existing && Array.isArray(existing.linkedMalIds) && existing.linkedMalIds.length > 0) {
+            setSelectedIds(new Set([media.id, ...existing.linkedMalIds]));
+          } else if (options.length > 1) {
+            // Pre-select all main anime seasons by default so multi-seasons are unified seamlessly
+            const canonIds = options
+              .filter((o) => o.type === media.type && o.seasonNumber !== undefined)
+              .map((o) => o.id);
+            if (canonIds.length > 0) {
+              setSelectedIds(new Set([media.id, ...canonIds]));
+            }
+          }
+        }
+      } catch {
+        if (active) {
+          setFranchiseOptions([
+            {
+              id: media.id,
+              title: media.title,
+              type: media.type,
+              format: media.format || (media.type === "manga" ? "Manga" : "TV"),
+              total: media.total ?? null,
+              cover: media.cover,
+              relation: "Current Selection",
+              isCurrent: true,
+            },
+          ]);
+        }
+      } finally {
+        if (active) setLoadingFranchise(false);
+      }
+    }
+
+    loadFranchise();
+
+    return () => {
+      active = false;
+    };
+  }, [media?.id, media?.type, media?.title, media?.format, media?.total, media?.cover]);
+
   if (!media) return null;
 
-  const sliderMax = total ?? Math.max(100, Math.ceil((progress + 25) / 10) * 10);
-  const percent = total
+  const percent = total !== null && total > 0
     ? Math.min(100, Math.round((progress / total) * 100))
-    : Math.min(100, Math.round((progress / sliderMax) * 100));
+    : 0;
 
   const remaining = total !== null ? Math.max(0, total - progress) : null;
 
@@ -3808,7 +3995,6 @@ function AddEntryModal({
     setProgress(clamped);
     setInputVal(String(clamped));
 
-    // Mihon auto-state transitions:
     if (clamped > 0 && status === "plan_to_watch") {
       setStatus("watching");
     }
@@ -3832,9 +4018,36 @@ function AddEntryModal({
     }
   };
 
-  const sliderBackgroundStyle = {
-    background: `linear-gradient(to right, var(--accent) 0%, var(--gold) ${percent}%, var(--surface-4) ${percent}%, var(--surface-4) 100%)`,
+  const toggleSelectId = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        if (id === media.id && next.size === 1) return prev;
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
   };
+
+  const selectAll = () => {
+    setSelectedIds(new Set(franchiseOptions.map((o) => o.id)));
+  };
+
+  const selectCanonOnly = () => {
+    const canon = franchiseOptions
+      .filter((o) => o.type === media.type && (o.seasonNumber !== undefined || o.id === media.id))
+      .map((o) => o.id);
+    setSelectedIds(new Set(canon.length > 0 ? canon : [media.id]));
+  };
+
+  const selectCurrentOnly = () => {
+    setSelectedIds(new Set([media.id]));
+  };
+
+  const selectedCount = selectedIds.size;
+  const isMultiSeason = franchiseOptions.length > 1;
 
   return (
     <div className="update-drawer-overlay" onClick={onClose}>
@@ -3893,12 +4106,14 @@ function AddEntryModal({
 
         {/* Scrollable Body */}
         <div className="update-drawer-body custom-scroll">
-          {/* 1. Progress Slider Section */}
+          {/* 1. Episode / Chapter Tracker Section (No slider, supports infinite/ongoing) */}
           <div className="update-section">
             <div className="update-section-head">
-              <span className="update-section-label">01 / PROGRESS SCRUBBER</span>
+              <span className="update-section-label">
+                {isManga ? "01 / CHAPTER TRACKER" : "01 / EPISODE TRACKER"}
+              </span>
               <span className={`update-section-badge ${percent === 100 ? "highlight" : ""}`}>
-                {percent}% COMPLETED
+                {total !== null ? `${percent}% COMPLETED` : "ONGOING RELEASE"}
               </span>
             </div>
 
@@ -3906,7 +4121,7 @@ function AddEntryModal({
               <div className="update-progress-numbers">
                 <span className="update-progress-num-big">{progress}</span>
                 <span className="update-progress-total-sub">
-                  / {total ?? "ongoing"} {unit.toLowerCase()}
+                  / {total !== null ? total : "∞"} {unit.toLowerCase()}
                 </span>
               </div>
               <div className="update-progress-percent">
@@ -3917,29 +4132,20 @@ function AddEntryModal({
                     <span>{remaining} {remaining === 1 ? unitSingular : unit} remaining</span>
                   )
                 ) : (
-                  <span>Scrub progress</span>
+                  <span style={{ color: "var(--gold)" }}>Ongoing Broadcast • No Episode Limit</span>
                 )}
               </div>
             </div>
 
-            {/* Interactive Precision Range Slider */}
-            <div className="update-slider-wrap">
-              <input
-                type="range"
-                className="update-range-slider"
-                min={0}
-                max={sliderMax}
-                value={progress}
-                style={sliderBackgroundStyle}
-                onChange={(e) => handleProgressChange(Number(e.target.value))}
-                aria-label={`Progress ${unit}`}
-              />
-              <div className="update-slider-ticks">
-                <span>0</span>
-                <span>{Math.round(sliderMax / 2)}</span>
-                <span>{sliderMax}{total === null ? "+" : ""}</span>
+            {/* Static visual meter (only rendered if total is known) */}
+            {total !== null && total > 0 && (
+              <div className="update-progress-meter-track">
+                <div
+                  className="update-progress-meter-fill"
+                  style={{ width: `${percent}%` }}
+                />
               </div>
-            </div>
+            )}
 
             {/* Steppers & Direct Input Row */}
             <div className="update-steppers-row">
@@ -3955,6 +4161,15 @@ function AddEntryModal({
               <button
                 type="button"
                 className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress - 5)}
+                disabled={progress <= 0}
+                title="Back 5"
+              >
+                -5
+              </button>
+              <button
+                type="button"
+                className="update-stepper-btn"
                 onClick={() => handleProgressChange(progress - 1)}
                 disabled={progress <= 0}
                 title="Back 1"
@@ -3962,8 +4177,8 @@ function AddEntryModal({
                 -1
               </button>
 
-              {/* Direct Numeric Input */}
-              <div className="update-direct-input-wrap" title="Directly enter number">
+              {/* Direct Numeric Input with no arbitrary clamp on infinite episodes */}
+              <div className="update-direct-input-wrap" title="Directly enter episode/chapter number">
                 <input
                   type="number"
                   className="update-direct-input"
@@ -3998,6 +4213,15 @@ function AddEntryModal({
               >
                 +5
               </button>
+              <button
+                type="button"
+                className="update-stepper-btn"
+                onClick={() => handleProgressChange(progress + 10)}
+                disabled={total !== null && progress >= total}
+                title="Forward 10"
+              >
+                +10
+              </button>
               {total !== null && (
                 <button
                   type="button"
@@ -4010,12 +4234,123 @@ function AddEntryModal({
                 </button>
               )}
             </div>
+
+            {/* Quick Action Button for one-click increment */}
+            <div className="update-quick-step-row">
+              <button
+                type="button"
+                className="update-quick-step-btn"
+                onClick={() => handleProgressChange(progress + 1)}
+                disabled={total !== null && progress >= total}
+              >
+                +1 {unitSingular} Watched
+              </button>
+            </div>
           </div>
 
-          {/* 2. Status Section */}
+          {/* 2. Franchise Multi-Select Section */}
+          <div className="update-section multiselect-section">
+            <div className="update-section-head">
+              <span className="update-section-label">
+                02 / FRANCHISE SEASONS (MULTI-SELECT)
+              </span>
+              <span className="multiselect-count-badge">
+                {selectedCount} Selected • 1 Unified Entry
+              </span>
+            </div>
+
+            <div className="multiselect-toolbar">
+              <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+                Selected seasons appear as a single entry in your library:
+              </span>
+              {isMultiSeason && (
+                <div className="multiselect-quick-actions">
+                  <button
+                    type="button"
+                    className="multiselect-quick-btn"
+                    onClick={selectAll}
+                    title="Select all related entries"
+                  >
+                    All ({franchiseOptions.length})
+                  </button>
+                  <button
+                    type="button"
+                    className="multiselect-quick-btn"
+                    onClick={selectCanonOnly}
+                    title="Select only canon seasons"
+                  >
+                    Canon
+                  </button>
+                  <button
+                    type="button"
+                    className="multiselect-quick-btn"
+                    onClick={selectCurrentOnly}
+                    title="Select current only"
+                  >
+                    Current
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {loadingFranchise ? (
+              <div style={{ fontSize: 11, color: "var(--text-3)", padding: "10px 0" }}>
+                Indexing franchise canon & seasons...
+              </div>
+            ) : (
+              <div className="multiselect-list custom-scroll">
+                {franchiseOptions.map((opt) => {
+                  const isChecked = selectedIds.has(opt.id);
+                  const isCurrent = opt.id === media.id;
+                  return (
+                    <div
+                      key={opt.id}
+                      className={`multiselect-item ${isChecked ? "selected" : ""} ${isCurrent ? "current" : ""}`}
+                      onClick={() => toggleSelectId(opt.id)}
+                    >
+                      <input
+                        type="checkbox"
+                        className="multiselect-checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleSelectId(opt.id)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <img
+                        className="multiselect-thumb"
+                        src={opt.cover}
+                        alt={opt.title}
+                      />
+                      <div className="multiselect-info">
+                        <div className="multiselect-title" title={opt.title}>
+                          {opt.title}
+                        </div>
+                        <div className="multiselect-meta">
+                          <span className={`multiselect-pill ${isCurrent ? "accent" : opt.relation?.includes("Season") ? "gold" : ""}`}>
+                            {opt.relation || opt.format}
+                          </span>
+                          <span>•</span>
+                          <span>
+                            {opt.total ? `${opt.total} ${opt.type === "manga" ? "chs" : "eps"}` : "Ongoing"}
+                          </span>
+                          {isCurrent && (
+                            <>
+                              <span>•</span>
+                              <span style={{ color: "var(--accent)", fontWeight: 700 }}>ACTIVE</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* 3. Status Section */}
           <div className="update-section">
             <div className="update-section-head">
-              <span className="update-section-label">02 / TRACKING STATUS</span>
+              <span className="update-section-label">03 / TRACKING STATUS</span>
               <span className="update-section-badge">
                 {status.replace("_", " ").toUpperCase()}
               </span>
@@ -4050,10 +4385,10 @@ function AddEntryModal({
             </div>
           </div>
 
-          {/* 3. Score Section */}
+          {/* 4. Score Section */}
           <div className="update-section">
             <div className="update-section-head">
-              <span className="update-section-label">03 / PERSONAL RATING</span>
+              <span className="update-section-label">04 / PERSONAL RATING</span>
               {userScore ? (
                 <span className="update-score-header-val">
                   {userScore} / 10 — {scoreLabels[userScore]}
@@ -4086,10 +4421,10 @@ function AddEntryModal({
             )}
           </div>
 
-          {/* 4. Notes Section */}
+          {/* 5. Notes Section */}
           <div className="update-section">
             <div className="update-section-head">
-              <span className="update-section-label">04 / PRIVATE MEMO</span>
+              <span className="update-section-label">05 / PRIVATE MEMO</span>
               <span className="update-section-badge">{notes.length} CHARS</span>
             </div>
             <textarea
@@ -4123,6 +4458,7 @@ function AddEntryModal({
               className="modal-btn primary"
               type="button"
               onClick={() => {
+                const selectedItems = franchiseOptions.filter((opt) => selectedIds.has(opt.id));
                 onSave({
                   status,
                   userScore,
@@ -4130,6 +4466,7 @@ function AddEntryModal({
                   progress,
                   completedSeasons: entry?.completed_seasons || [],
                   completedVolumes: entry?.completed_volumes || [],
+                  selectedFranchiseItems: selectedItems.length > 0 ? selectedItems : undefined,
                 });
               }}
             >
@@ -4666,6 +5003,7 @@ export default function Home() {
     progress: number;
     completedSeasons: number[];
     completedVolumes: number[];
+    selectedFranchiseItems?: FranchiseItemOption[];
   }) => {
     if (!modalState) return;
     const { media, entry } = modalState;
@@ -4709,30 +5047,33 @@ export default function Home() {
       : addEntry(entries, nextEntry);
     commitEntries(nextEntries);
 
-    // Sync to Unified Franchise
-    const matchedFranchise = findFranchiseByMalId(franchises, media.id);
-    const franchiseId = matchedFranchise?.franchiseId || `franchise_${media.id}`;
-    const existingFranchise = matchedFranchise || franchises[franchiseId];
+    // Multi-Select Franchise Bundling into ONE Single Unified Entry
+    const primaryOption: FranchiseItemOption = {
+      id: media.id,
+      title: media.title,
+      type: media.type,
+      format: media.format || (media.type === "manga" ? "Manga" : "TV"),
+      total: media.total ?? null,
+      cover: media.cover,
+      relation: "Current Title",
+      isCurrent: true,
+    };
 
-    if (existingFranchise) {
-      let nextFranchises = { ...franchises };
-      if (media.type === "anime") {
-        nextFranchises = bulkWatchEpisodes(nextFranchises, franchiseId, media.id, clampedProgress);
-        if (nextFranchises[franchiseId]?.anime?.seasons?.[media.id]) {
-          nextFranchises[franchiseId].anime.seasons[media.id].score = data.userScore ?? 0;
-          nextFranchises[franchiseId].anime.seasons[media.id].notes = data.notes;
-          nextFranchises[franchiseId].anime.seasons[media.id].status = finalStatus === "completed" ? "COMPLETED" : "WATCHING";
-        }
-      } else if (media.type === "manga") {
-        nextFranchises = updateMangaProgress(nextFranchises, franchiseId, media.id, {
-          chaptersRead: clampedProgress,
-          status: finalStatus === "completed" ? "COMPLETED" : "READING",
-          score: data.userScore ?? undefined,
-          notes: data.notes,
-        });
-      }
-      saveFranchiseEntries(nextFranchises);
-    }
+    const selectedOptions =
+      data.selectedFranchiseItems && data.selectedFranchiseItems.length > 0
+        ? data.selectedFranchiseItems
+        : [primaryOption];
+
+    const { updatedFranchises, franchiseId } = bundleFranchiseEntries(
+      franchises,
+      primaryOption,
+      selectedOptions,
+      clampedProgress,
+      finalStatus,
+      data.userScore,
+      data.notes
+    );
+    commitFranchises(updatedFranchises);
 
     // Append to Mihon append-only history log
     appendHistory({

@@ -639,7 +639,7 @@ export default function AnimeDetailPage() {
               }}
             >
               <div className="detail-section-title" style={{ margin: 0 }}>
-                Episode Tracker ({completedEpisodes.length} / {media?.total ?? (episodes.length > 0 ? episodes.length : "?")})
+                Episode Tracker ({completedEpisodes.length} / {media?.total ? `${media.total}` : "Ongoing"})
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <button
@@ -713,11 +713,95 @@ export default function AnimeDetailPage() {
               </div>
             ) : null}
 
+            {/* Quick Manual Episode Tracker (Allows stepping/entering any episode even for infinite/ongoing anime) */}
+            <div className="anime-manual-tracker-bar">
+              <div className="manual-tracker-info">
+                <span className="manual-tracker-label">QUICK EPISODE TRACKER</span>
+                <span className="manual-tracker-count">
+                  Episode <strong>{completedEpisodes.length}</strong> / {media?.total ? `${media.total}` : "∞ Ongoing"}
+                </span>
+              </div>
+              <div className="manual-tracker-controls">
+                <button
+                  type="button"
+                  className="stepper-btn"
+                  disabled={completedEpisodes.length <= 0 || !entry}
+                  onClick={() => {
+                    if (completedEpisodes.length > 0) {
+                      const maxEp = Math.max(...completedEpisodes);
+                      toggleEpisode(maxEp);
+                    }
+                  }}
+                  title="Unwatch latest episode"
+                >
+                  -1
+                </button>
+                <input
+                  type="number"
+                  className="manual-tracker-input"
+                  min={0}
+                  max={media?.total ?? 99999}
+                  value={completedEpisodes.length}
+                  disabled={!entry}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    if (!isNaN(val) && val >= 0) {
+                      handleWatchUpTo(val);
+                    }
+                  }}
+                  title="Directly enter episode number"
+                />
+                <button
+                  type="button"
+                  className="stepper-btn primary"
+                  disabled={!entry || (media?.total ? completedEpisodes.length >= media.total : false)}
+                  onClick={() => {
+                    const nextEp = completedEpisodes.length + 1;
+                    handleWatchUpTo(nextEp);
+                  }}
+                  title="Watch next episode"
+                >
+                  +1 Ep
+                </button>
+                <button
+                  type="button"
+                  className="stepper-btn secondary"
+                  disabled={!entry || (media?.total ? completedEpisodes.length >= media.total : false)}
+                  onClick={() => {
+                    const nextEp = completedEpisodes.length + 5;
+                    handleWatchUpTo(media?.total ? Math.min(nextEp, media.total) : nextEp);
+                  }}
+                  title="+5 episodes"
+                >
+                  +5
+                </button>
+                <button
+                  type="button"
+                  className="stepper-btn secondary"
+                  disabled={!entry || (media?.total ? completedEpisodes.length >= media.total : false)}
+                  onClick={() => {
+                    const nextEp = completedEpisodes.length + 10;
+                    handleWatchUpTo(media?.total ? Math.min(nextEp, media.total) : nextEp);
+                  }}
+                  title="+10 episodes"
+                >
+                  +10
+                </button>
+              </div>
+            </div>
+
             {/* Episodes List */}
             {loadingEpisodes ? (
               <div className="detail-empty">Loading episodes…</div>
             ) : episodes.length === 0 ? (
-              <div className="detail-empty">Episode list unavailable.</div>
+              <div className="detail-empty" style={{ textAlign: "center", padding: "20px 16px" }}>
+                <div style={{ color: "var(--text-1)", fontWeight: 600, marginBottom: 4 }}>
+                  {media?.total ? "Episode Guide Indexing" : "Ongoing Broadcast • No Episode Limit"}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-3)", maxWidth: 360, margin: "0 auto" }}>
+                  Detailed episode titles are updating from broadcast. Use the quick tracker above to log your progress directly.
+                </div>
+              </div>
             ) : (
               <>
                 <div className="episode-list custom-scroll">

@@ -556,6 +556,231 @@ export function removeFranchiseEntry(
   return next;
 }
 
+// ─── Multi-Select Franchise Bundler (Mihon-Style Unified Entry) ───
+
+export interface FranchiseItemOption {
+  id: number;
+  title: string;
+  type: MediaType;
+  format: string;
+  seasonNumber?: number;
+  total: number | null;
+  cover: string;
+  relation?: string;
+  isCurrent?: boolean;
+}
+
+export function bundleFranchiseEntries(
+  franchises: Record<string, UnifiedFranchiseEntry>,
+  primaryItem: FranchiseItemOption,
+  selectedItems: FranchiseItemOption[],
+  primaryProgress: number,
+  primaryStatus: OkamiStatus,
+  userScore: number | null,
+  notes: string
+): { updatedFranchises: Record<string, UnifiedFranchiseEntry>; franchiseId: string } {
+  const allIds = Array.from(new Set([primaryItem.id, ...selectedItems.map((i) => i.id)]));
+
+  // Check if any of the items already belong to an existing franchise
+  let existingFranchise: UnifiedFranchiseEntry | undefined;
+  for (const id of allIds) {
+    const found = findFranchiseByMalId(franchises, id);
+    if (found) {
+      existingFranchise = found;
+      break;
+    }
+  }
+
+  const rootMalId = existingFranchise?.rootMalId || primaryItem.id;
+  const franchiseId = existingFranchise?.franchiseId || `franchise_${rootMalId}`;
+  const now = Date.now();
+
+  const mergedLinkedIds = Array.from(
+    new Set([...(existingFranchise?.linkedMalIds || []), ...allIds])
+  );
+
+  const animeItems = [primaryItem, ...selectedItems].filter(
+    (item, index, self) => item.type === "anime" && self.findIndex((s) => s.id === item.id) === index
+  );
+  const mangaItems = [primaryItem, ...selectedItems].filter(
+    (item, index, self) => item.type === "manga" && self.findIndex((s) => s.id === item.id) === index
+  );
+
+  // Construct or update anime seasons
+  const updatedSeasons: Record<number, SeasonProgress | SeasonTrack> = {
+    ...(existingFranchise?.anime?.seasons || {}),
+  };
+
+  for (const item of animeItems) {
+    const isPrimary = item.id === primaryItem.id;
+    const existingSeason = updatedSeasons[item.id];
+    const totalEps = item.total && item.total > 0 ? item.total : (existingSeason?.totalEpisodes || 0);
+
+    if (isPrimary) {
+      const watched = primaryProgress;
+      const watchedIds = Array.from({ length: watched }, (_, i) => i + 1);
+      const isDone = totalEps > 0 && watched >= totalEps;
+      const watchStat: WatchStatus =
+        primaryStatus === "completed" || isDone
+          ? "COMPLETED"
+          : watched > 0 || primaryStatus === "watching"
+            ? "WATCHING"
+            : primaryStatus === "on_hold"
+              ? "ON_HOLD"
+              : primaryStatus === "dropped"
+                ? "DROPPED"
+                : "PLAN_TO_WATCH";
+
+      updatedSeasons[item.id] = {
+        malId: item.id,
+        title: item.title,
+        coverImage: item.cover,
+        type: item.format || "TV",
+        seasonNumber: item.seasonNumber || 1,
+        episodesWatched: watched,
+        totalEpisodes: totalEps,
+        watchedEpisodeIds: watchedIds,
+        status: watchStat,
+        score: userScore ?? 0,
+        notes: notes || "",
+        updatedAt: now,
+      };
+    } else if (!existingSeason) {
+      updatedSeasons[item.id] = {
+        malId: item.id,
+        title: item.title,
+        coverImage: item.cover,
+        type: item.format || "TV",
+        seasonNumber: item.seasonNumber || 1,
+        episodesWatched: 0,
+        totalEpisodes: totalEps,
+        watchedEpisodeIds: [],
+        status: "PLAN_TO_WATCH",
+        score: 0,
+        notes: "",
+        updatedAt: now,
+      };
+    }
+  }
+
+  // Construct or update manga series
+  const updatedSeries: Record<number, MangaProgress | MangaTrack> = {
+    ...(existingFranchise?.manga?.series || {}),
+  };
+
+  for (const item of mangaItems) {
+    const isPrimary = item.id === primaryItem.id;
+    const existingManga = updatedSeries[item.id];
+    const totalCh = item.total && item.total > 0 ? item.total : (existingManga?.totalChapters || 0);
+
+    if (isPrimary) {
+      const read = primaryProgress;
+      const isDone = totalCh > 0 && read >= totalCh;
+      const readStat: ReadStatus =
+        primaryStatus === "completed" || isDone
+          ? "COMPLETED"
+          : read > 0 || primaryStatus === "watching"
+            ? "READING"
+            : primaryStatus === "on_hold"
+              ? "ON_HOLD"
+              : primaryStatus === "dropped"
+                ? "DROPPED"
+                : "PLAN_TO_READ";
+
+      updatedSeries[item.id] = {
+        malId: item.id,
+        title: item.title,
+        coverImage: item.cover,
+        format: item.format || "Manga",
+        chaptersRead: read,
+        totalChapters: totalCh,
+        volumesRead: existingManga?.volumesRead || 0,
+        totalVolumes: existingManga?.totalVolumes || 0,
+        readVolumeNumbers: existingManga?.readVolumeNumbers || [],
+        status: readStat,
+        score: userScore ?? 0,
+        notes: notes || "",
+        updatedAt: now,
+      };
+    } else if (!existingManga) {
+      updatedSeries[item.id] = {
+        malId: item.id,
+        title: item.title,
+        coverImage: item.cover,
+        format: item.format || "Manga",
+        chaptersRead: 0,
+        totalChapters: totalCh,
+        volumesRead: 0,
+        totalVolumes: 0,
+        readVolumeNumbers: [],
+        status: "PLAN_TO_READ",
+        score: 0,
+        notes: "",
+        updatedAt: now,
+      };
+    }
+  }
+
+  const hasAnime = Object.keys(updatedSeasons).length > 0;
+  const hasManga = Object.keys(updatedSeries).length > 0;
+
+  const allAnimeCompleted = hasAnime && Object.values(updatedSeasons).every((s) => s.status === "COMPLETED");
+  const anyAnimeWatching = hasAnime && Object.values(updatedSeasons).some((s) => s.status === "WATCHING");
+  const overallWatchStatus: WatchStatus = allAnimeCompleted
+    ? "COMPLETED"
+    : anyAnimeWatching
+      ? "WATCHING"
+      : "PLAN_TO_WATCH";
+
+  const allMangaCompleted = hasManga && Object.values(updatedSeries).every((m) => m.status === "COMPLETED");
+  const anyMangaReading = hasManga && Object.values(updatedSeries).some((m) => m.status === "READING");
+  const overallReadStatus: ReadStatus = allMangaCompleted
+    ? "COMPLETED"
+    : anyMangaReading
+      ? "READING"
+      : "PLAN_TO_READ";
+
+  const nextFranchise: UnifiedFranchiseEntry = {
+    franchiseId,
+    rootMalId,
+    title: existingFranchise?.title || primaryItem.title,
+    coverImage: existingFranchise?.coverImage || primaryItem.cover,
+    bannerImage: existingFranchise?.bannerImage,
+    genres: existingFranchise?.genres || [],
+    addedAt: existingFranchise?.addedAt || now,
+    updatedAt: now,
+    isFavorite: existingFranchise?.isFavorite || false,
+    categories: existingFranchise?.categories || [],
+    linkedMalIds: mergedLinkedIds,
+    ...(hasAnime
+      ? {
+          anime: {
+            overallStatus: overallWatchStatus,
+            activeSeasonMalId: primaryItem.type === "anime" ? primaryItem.id : existingFranchise?.anime?.activeSeasonMalId || rootMalId,
+            seasons: updatedSeasons,
+          },
+        }
+      : {}),
+    ...(hasManga
+      ? {
+          manga: {
+            overallStatus: overallReadStatus,
+            activeMangaMalId: primaryItem.type === "manga" ? primaryItem.id : existingFranchise?.manga?.activeMangaMalId || rootMalId,
+            series: updatedSeries,
+          },
+        }
+      : {}),
+  };
+
+  const updatedFranchises: Record<string, UnifiedFranchiseEntry> = {
+    ...franchises,
+    [franchiseId]: nextFranchise,
+  };
+
+  saveFranchiseEntries(updatedFranchises);
+  return { updatedFranchises, franchiseId };
+}
+
 // ─── Smart Episode Progression & Auto-Rollup Logic ───
 
 export function incrementEpisode(
@@ -1304,7 +1529,7 @@ export function getFranchiseDisplayInfo(
     if (activeSeason) {
       activeSeasonNumber = activeSeason.seasonNumber;
       activeSeasonMalId = activeSeason.malId;
-      const totalLabel = activeSeason.totalEpisodes > 0 ? String(activeSeason.totalEpisodes) : "?";
+      const totalLabel = activeSeason.totalEpisodes > 0 ? String(activeSeason.totalEpisodes) : "∞";
       progressLabel =
         totalSeasons > 1
           ? `S${activeSeason.seasonNumber} • Ep ${activeSeason.episodesWatched}/${totalLabel}`
@@ -1327,7 +1552,7 @@ export function getFranchiseDisplayInfo(
     if (activeManga) {
       activeMangaMalId = activeManga.malId;
       overallStatus = mapReadStatusToLegacy(activeManga.status);
-      const chTotal = activeManga.totalChapters > 0 ? String(activeManga.totalChapters) : "?";
+      const chTotal = activeManga.totalChapters > 0 ? String(activeManga.totalChapters) : "∞";
       progressLabel = `Vol ${activeManga.volumesRead} • Ch ${activeManga.chaptersRead}/${chTotal}`;
     }
   }
