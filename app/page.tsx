@@ -946,7 +946,7 @@ function LibraryView({
             </button>
           </div>
           <div className="recent-activity-strip">
-            {history.slice(0, 8).map((h) => (
+            {history.slice(0, 4).map((h) => (
               <div
                 key={h.id}
                 className="recent-activity-card"

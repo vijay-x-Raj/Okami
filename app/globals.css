@@ -2553,11 +2553,19 @@ body::after {
 }
 .recent-activity-strip {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(220px, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
-  overflow-x: auto;
-  padding-bottom: 6px;
+  overflow: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.recent-activity-strip::-webkit-scrollbar {
+  display: none;
+}
+@media (max-width: 600px) {
+  .recent-activity-strip {
+    grid-template-columns: 1fr;
+  }
 }
 .recent-activity-card {
   display: flex;
@@ -2570,6 +2578,8 @@ body::after {
   transition: all 0.2s ease;
   cursor: pointer;
   text-align: left;
+  min-width: 0;
+  overflow: hidden;
 }
 .recent-activity-card:hover {
   border-color: var(--border-hi);
