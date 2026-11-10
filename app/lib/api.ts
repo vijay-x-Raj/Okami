@@ -26,18 +26,56 @@ export interface FetchEpisodesResponse {
   };
 }
 
-async function getJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+interface ClientCacheItem<T> {
+  data: T;
+  timestamp: number;
+}
+
+const _clientCache = new Map<string, ClientCacheItem<unknown>>();
+const _inFlight = new Map<string, Promise<unknown>>();
+const CLIENT_DEFAULT_TTL = 20 * 60 * 1000; // 20 minutes
+
+async function getJson<T>(input: RequestInfo | URL, init?: RequestInit, ttlMs: number = CLIENT_DEFAULT_TTL): Promise<T> {
+  const key = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+
+  const cached = _clientCache.get(key);
+  if (cached && Date.now() - cached.timestamp < ttlMs) {
+    return cached.data as T;
   }
-  return (await response.json()) as T;
+
+  const inFlightPromise = _inFlight.get(key);
+  if (inFlightPromise) {
+    return inFlightPromise as Promise<T>;
+  }
+
+  const fetchPromise = (async () => {
+    try {
+      const response = await fetch(input, {
+        ...init,
+        headers: {
+          "Content-Type": "application/json",
+          ...(init?.headers || {}),
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status}`);
+      }
+      const data = (await response.json()) as T;
+      _clientCache.set(key, { data, timestamp: Date.now() });
+      return data;
+    } finally {
+      _inFlight.delete(key);
+    }
+  })();
+
+  _inFlight.set(key, fetchPromise);
+  return fetchPromise;
+}
+
+export function prefetchMedia(type: MediaType, id: number): void {
+  if (typeof window === "undefined") return;
+  fetchDetail(type, id).catch(() => {});
+  fetchFranchiseGraph(id, type).catch(() => {});
 }
 
 export async function searchMedia(

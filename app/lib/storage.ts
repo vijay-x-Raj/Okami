@@ -111,6 +111,9 @@ export interface UnifiedFranchiseEntry {
   categories?: string[]; // Custom category IDs assigned to this franchise
   startedAt?: number;
   completedAt?: number;
+  // Explicit multiple-selected archive collection folder
+  isArchive?: boolean;
+  isArchiveFolder?: boolean;
   // Map any child mal_id (e.g. Season 2, Season 3, Manga ID) to this entry
   linkedMalIds: number[];
   anime?: {
@@ -578,7 +581,8 @@ export function bundleFranchiseEntries(
   primaryStatus: OkamiStatus,
   userScore: number | null,
   notes: string,
-  customTitle?: string
+  customTitle?: string,
+  isArchiveFolder?: boolean
 ): { updatedFranchises: Record<string, UnifiedFranchiseEntry>; franchiseId: string } {
   const allIds = Array.from(new Set([primaryItem.id, ...selectedItems.map((i) => i.id)]));
 
@@ -748,6 +752,12 @@ export function bundleFranchiseEntries(
       ? `${cleanedTitle} Series`
       : primaryItem.title;
 
+  const isExplicitArchive = Boolean(
+    isArchiveFolder !== undefined
+      ? isArchiveFolder
+      : (customTitle?.trim() && selectedItems.length > 0)
+  );
+
   const nextFranchise: UnifiedFranchiseEntry = {
     franchiseId,
     rootMalId,
@@ -760,6 +770,8 @@ export function bundleFranchiseEntries(
     isFavorite: existingFranchise?.isFavorite || false,
     categories: existingFranchise?.categories || [],
     linkedMalIds: mergedLinkedIds,
+    isArchive: isExplicitArchive || existingFranchise?.isArchive || false,
+    isArchiveFolder: isExplicitArchive || existingFranchise?.isArchiveFolder || false,
     ...(hasAnime
       ? {
           anime: {
@@ -1759,7 +1771,8 @@ export function getFranchiseDisplayInfo(
     ? animeSeasons.filter((s) => s.status === "COMPLETED").length
     : mangaSeries.filter((m) => m.status === "COMPLETED").length;
 
-  const isFolder = itemCount > 1 || (Array.isArray(franchise.linkedMalIds) && franchise.linkedMalIds.length > 1);
+  // ONLY explicit multiple-selected archives are folders (similar series are kept as regular entries)
+  const isFolder = Boolean(franchise.isArchive || franchise.isArchiveFolder);
 
   if (hasAnime && franchise.anime) {
     overallStatus = mapWatchStatusToLegacy(franchise.anime.overallStatus);

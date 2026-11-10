@@ -1,5 +1,12 @@
 import { ensureMediaType, resolveFranchiseGraph } from "@/app/lib/jikan";
 import { aniListFranchise } from "@/app/lib/anilist";
+import {
+  getServerCache,
+  setServerCache,
+  isJikanAvailable,
+  reportJikanSuccess,
+  reportJikanFailure,
+} from "@/app/lib/server-cache";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -10,39 +17,51 @@ export async function GET(request: Request) {
     return Response.json({ error: "Invalid id" }, { status: 400 });
   }
 
-  // 1. Try Jikan with a 2.5s timeout
-  try {
-    const graph = await Promise.race([
-      resolveFranchiseGraph(id, type),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Jikan franchise timeout")), 2500)
-      ),
-    ]);
-
-    return Response.json(
-      {
-        data: graph,
-        franchiseId: graph.franchiseId,
-        rootMalId: graph.rootMalId,
-        title: graph.title,
-        coverImage: graph.cover,
-        bannerImage: graph.bannerImage,
-        mainSeasons: graph.seasons,
-        moviesAndOvas: graph.extras,
-        mangaAdaptations: graph.adaptations,
+  const cacheKey = `franchise:${type}:${id}`;
+  const cached = getServerCache<Record<string, unknown>>(cacheKey);
+  if (cached) {
+    return Response.json(cached, {
+      headers: {
+        "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
+        "X-Okami-Cache": "HIT",
       },
-      {
-        headers: {
-          "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
-        },
-      }
-    );
+    });
+  }
+
+  // 1. Primary: High-speed AniList franchise graph (~250ms single GraphQL call)
+  try {
+    const graph = await aniListFranchise(type, id);
+    const payload = {
+      data: graph,
+      franchiseId: graph.franchiseId,
+      rootMalId: graph.rootMalId,
+      title: graph.title,
+      coverImage: graph.cover,
+      bannerImage: graph.bannerImage,
+      mainSeasons: graph.seasons,
+      moviesAndOvas: graph.extras,
+      mangaAdaptations: graph.adaptations,
+    };
+    setServerCache(cacheKey, payload);
+
+    return Response.json(payload, {
+      headers: {
+        "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
+        "X-Okami-Provider": "AniList",
+      },
+    });
   } catch {
-    // 2. Seamless AniList franchise fallback
-    try {
-      const graph = await aniListFranchise(type, id);
-      return Response.json(
-        {
+    // 2. Fallback to Jikan if AniList doesn't have the entry
+    if (isJikanAvailable()) {
+      try {
+        const graph = await Promise.race([
+          resolveFranchiseGraph(id, type),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Jikan franchise timeout")), 1200)
+          ),
+        ]);
+        reportJikanSuccess();
+        const payload = {
           data: graph,
           franchiseId: graph.franchiseId,
           rootMalId: graph.rootMalId,
@@ -52,17 +71,26 @@ export async function GET(request: Request) {
           mainSeasons: graph.seasons,
           moviesAndOvas: graph.extras,
           mangaAdaptations: graph.adaptations,
-        },
-        {
+        };
+        setServerCache(cacheKey, payload);
+
+        return Response.json(payload, {
           headers: {
             "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
+            "X-Okami-Provider": "Jikan",
           },
-        }
-      );
-    } catch (fallbackError) {
+        });
+      } catch (err) {
+        reportJikanFailure();
+        return Response.json(
+          { error: err instanceof Error ? err.message : "Failed to resolve franchise graph" },
+          { status: 502 }
+        );
+      }
+    } else {
       return Response.json(
-        { error: fallbackError instanceof Error ? fallbackError.message : "Failed to resolve franchise graph" },
-        { status: 502 }
+        { error: "Franchise graph service temporarily unavailable" },
+        { status: 503 }
       );
     }
   }

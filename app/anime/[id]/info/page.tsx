@@ -51,23 +51,45 @@ export default function AnimeInfoPage() {
   const rawId = Array.isArray(params?.id) ? params.id[0] : params?.id;
   const animeId = rawId ? Number(rawId) : Number.NaN;
 
-  const [media, setMedia] = useState<OkamiMedia | null>(null);
+  const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
+
+  const entry = useMemo(
+    () => entries.find((item) => item.id === animeId && item.type === "anime"),
+    [entries, animeId]
+  );
+
+  const [media, setMedia] = useState<OkamiMedia | null>(() => {
+    const all = loadEntries();
+    const found = all.find((item) => item.id === animeId && item.type === "anime");
+    if (found) {
+      return {
+        id: found.id,
+        type: "anime",
+        title: found.title,
+        cover: found.cover,
+        year: found.year,
+        format: found.format,
+        genres: found.genres || [],
+        official_score: found.official_score,
+        total: found.total,
+        synopsis: found.notes || "",
+      };
+    }
+    return null;
+  });
   const [characters, setCharacters] = useState<JikanCharacter[]>([]);
   const [franchiseGraph, setFranchiseGraph] = useState<FranchiseGraph | null>(null);
   const [relatedList, setRelatedList] = useState<JikanRelation[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
+  const [loading, setLoading] = useState<boolean>(() => {
+    const all = loadEntries();
+    return !all.some((item) => item.id === animeId && item.type === "anime");
+  });
 
   // Personal score & notes editor
   const [userScore, setUserScore] = useState<number | null>(null);
   const [userNotes, setUserNotes] = useState<string>("");
   const [userStatus, setUserStatus] = useState<OkamiStatus>(DEFAULT_STATUS);
   const [showTrailerModal, setShowTrailerModal] = useState(false);
-
-  const entry = useMemo(
-    () => entries.find((item) => item.id === animeId && item.type === "anime"),
-    [entries, animeId]
-  );
 
   useEffect(() => {
     if (entry) {
@@ -117,35 +139,45 @@ export default function AnimeInfoPage() {
 
     Promise.resolve().then(() => {
       if (!active) return;
-      setLoading(true);
-      setMedia(null);
+      if (!entry) {
+        setLoading(true);
+        setMedia(null);
+      }
       setCharacters([]);
       setFranchiseGraph(null);
       setRelatedList([]);
     });
 
     const load = async () => {
+      // 1. Fetch primary detail first and render hero/synopsis immediately (~100-200ms)
       try {
-        const [detail, cast, graph, related] = await Promise.all([
-          fetchDetail("anime", animeId),
-          fetchCharacters(animeId, "anime").catch(() => []),
-          fetchFranchiseGraph(animeId, "anime").catch(() => null),
-          fetchRelated("anime", animeId).catch(() => []),
-        ]);
+        const detail = await fetchDetail("anime", animeId);
         if (!active) return;
         setMedia(detail);
-        setCharacters(cast);
-        setFranchiseGraph(graph);
-        setRelatedList(related);
+        setLoading(false);
       } catch {
         if (!active) return;
-        setMedia(null);
-        setCharacters([]);
-        setFranchiseGraph(null);
-        setRelatedList([]);
-      } finally {
-        if (active) setLoading(false);
+        setLoading(false);
       }
+
+      // 2. Stream in franchise relations and cast concurrently in the background
+      fetchFranchiseGraph(animeId, "anime")
+        .then((graph) => {
+          if (active && graph) setFranchiseGraph(graph);
+        })
+        .catch(() => {});
+
+      fetchRelated("anime", animeId)
+        .then((related) => {
+          if (active && related) setRelatedList(related);
+        })
+        .catch(() => {});
+
+      fetchCharacters(animeId, "anime")
+        .then((cast) => {
+          if (active && cast) setCharacters(cast);
+        })
+        .catch(() => {});
     };
 
     load();
@@ -153,7 +185,7 @@ export default function AnimeInfoPage() {
     return () => {
       active = false;
     };
-  }, [animeId]);
+  }, [animeId, entry]);
 
   const allSeasons = useMemo(() => franchiseGraph?.seasons ?? [], [franchiseGraph]);
   const allExtras = useMemo(() => franchiseGraph?.extras ?? [], [franchiseGraph]);
@@ -319,6 +351,172 @@ export default function AnimeInfoPage() {
           </>
         )}
       </div>
+
+      {/* Franchise Universe & Related Series (Prominently Placed Below Synopsis) */}
+      {(allSeasons.length > 0 ||
+        allExtras.length > 0 ||
+        relatedAnime.length > 0 ||
+        linkedManga ||
+        relatedManga.length > 0) && (
+        <div className="detail-card" style={{ marginBottom: 16 }}>
+          <div className="detail-section">
+            <div className="detail-section-title">Related Anime &amp; Manga Releases</div>
+
+            {/* ── Section 1: ANIME RELEASES & RELATED ── */}
+            <div className="franchise-section-divider">
+              <span className="franchise-section-badge anime">Anime Releases</span>
+              <span className="franchise-section-count">
+                {allSeasons.length + allExtras.length + relatedAnime.length} Titles
+              </span>
+            </div>
+
+            {/* Mainline Seasons List */}
+            {allSeasons.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div className="franchise-group-title">Mainline Chronological Seasons</div>
+                <div className="franchise-nodes-list">
+                  {allSeasons.map((season) => {
+                    const isCurrent = season.malId === animeId;
+                    const stored = entries.find((e) => e.id === season.malId && e.type === "anime");
+                    const isDone = stored?.status === "completed";
+                    return (
+                      <div
+                        className={`franchise-node-item ${isCurrent ? "current" : ""}`}
+                        key={season.malId}
+                      >
+                        <img className="franchise-node-thumb" src={season.cover} alt={season.title} />
+                        <div style={{ flex: 1 }}>
+                          <div className="franchise-node-title">
+                            S{season.seasonNumber}: {season.title}
+                          </div>
+                          <div className="franchise-node-sub">
+                            {season.year || "--"} • {season.episodes ? `${season.episodes} eps` : "Ongoing"}
+                            {isDone ? " • Completed" : stored ? ` • ${stored.status}` : ""}
+                          </div>
+                        </div>
+                        {isCurrent ? (
+                          <span className="franchise-node-active-pill">CURRENT</span>
+                        ) : (
+                          <Link className="franchise-node-action" href={`/anime/${season.malId}/info`}>
+                            View Info →
+                          </Link>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Movies & Specials */}
+            {allExtras.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div className="franchise-group-title">Theatrical Films &amp; Specials</div>
+                <div className="franchise-nodes-list">
+                  {allExtras.map((extra) => (
+                    <div className="franchise-node-item" key={extra.malId}>
+                      <img className="franchise-node-thumb" src={extra.cover} alt={extra.title} />
+                      <div style={{ flex: 1 }}>
+                        <div className="franchise-node-title">{extra.title}</div>
+                        <div className="franchise-node-sub">
+                          {extra.type} • {extra.year || "--"}
+                        </div>
+                      </div>
+                      <Link className="franchise-node-action" href={`/anime/${extra.malId}/info`}>
+                        View Info →
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Related Anime Series */}
+            {relatedAnime.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div className="franchise-group-title">Related Anime Series &amp; Spin-Offs</div>
+                <div className="franchise-nodes-list">
+                  {relatedAnime.map((item) => (
+                    <div className="franchise-node-item" key={`${item.relation}-${item.mal_id}`}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                          <span className={`relation-chip ${item.relation.toLowerCase().replace(/\s+/g, "-")}`}>
+                            {item.relation}
+                          </span>
+                          <span className="franchise-node-title">{item.name}</span>
+                        </div>
+                      </div>
+                      <Link
+                        className="franchise-node-action"
+                        href={`/anime/${item.mal_id}/info`}
+                        title={`View ${item.name}`}
+                      >
+                        View Anime →
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Section 2: MANGA & PRINT PUBLICATIONS ── */}
+            <div className="franchise-section-divider" style={{ marginTop: 24 }}>
+              <span className="franchise-section-badge manga">Manga &amp; Print Publications</span>
+              <span className="franchise-section-count">
+                {(linkedManga ? 1 : 0) + relatedManga.length} Titles
+              </span>
+            </div>
+
+            {/* Linked Manga Adaptation */}
+            {linkedManga && (
+              <div style={{ marginBottom: 16 }}>
+                <div className="franchise-group-title">Source / Original Manga</div>
+                <div className="franchise-node-item">
+                  <img className="franchise-node-thumb" src={linkedManga.cover} alt={linkedManga.title} />
+                  <div style={{ flex: 1 }}>
+                    <div className="franchise-node-title">{linkedManga.title}</div>
+                    <div className="franchise-node-sub">
+                      {linkedManga.type} • {linkedManga.year || "--"}
+                      {linkedManga.chapters ? ` • ${linkedManga.chapters} chapters` : ""}
+                    </div>
+                  </div>
+                  <Link className="franchise-node-action manga" href={`/manga/${linkedManga.malId}/info`}>
+                    View Manga Info →
+                  </Link>
+                </div>
+              </div>
+            )}
+
+            {/* Related Manga & Light Novels */}
+            {relatedManga.length > 0 && (
+              <div>
+                <div className="franchise-group-title">Related Manga &amp; Light Novels</div>
+                <div className="franchise-nodes-list">
+                  {relatedManga.map((item) => (
+                    <div className="franchise-node-item" key={`${item.relation}-${item.mal_id}`}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                          <span className={`relation-chip ${item.relation.toLowerCase().replace(/\s+/g, "-")}`}>
+                            {item.relation}
+                          </span>
+                          <span className="franchise-node-title">{item.name}</span>
+                        </div>
+                      </div>
+                      <Link
+                        className="franchise-node-action manga"
+                        href={`/manga/${item.mal_id}/info`}
+                        title={`View ${item.name}`}
+                      >
+                        View Manga →
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Lower Grid: Metadata, Streaming, Personal Notes & Cast */}
       <div className="detail-lower-grid">
@@ -503,172 +701,6 @@ export default function AnimeInfoPage() {
           </div>
         </div>
       </div>
-
-      {/* Franchise Universe & Related Series */}
-      {(allSeasons.length > 0 ||
-        allExtras.length > 0 ||
-        relatedAnime.length > 0 ||
-        linkedManga ||
-        relatedManga.length > 0) && (
-        <div className="detail-card" style={{ marginTop: 16 }}>
-          <div className="detail-section">
-            <div className="detail-section-title">Franchise Universe &amp; Related Series</div>
-
-            {/* ── Section 1: ANIME RELEASES & RELATED ── */}
-            <div className="franchise-section-divider">
-              <span className="franchise-section-badge anime">Anime Releases</span>
-              <span className="franchise-section-count">
-                {allSeasons.length + allExtras.length + relatedAnime.length} Titles
-              </span>
-            </div>
-
-            {/* Mainline Seasons List */}
-            {allSeasons.length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <div className="franchise-group-title">Mainline Chronological Seasons</div>
-                <div className="franchise-nodes-list">
-                  {allSeasons.map((season) => {
-                    const isCurrent = season.malId === animeId;
-                    const stored = entries.find((e) => e.id === season.malId && e.type === "anime");
-                    const isDone = stored?.status === "completed";
-                    return (
-                      <div
-                        className={`franchise-node-item ${isCurrent ? "current" : ""}`}
-                        key={season.malId}
-                      >
-                        <img className="franchise-node-thumb" src={season.cover} alt={season.title} />
-                        <div style={{ flex: 1 }}>
-                          <div className="franchise-node-title">
-                            S{season.seasonNumber}: {season.title}
-                          </div>
-                          <div className="franchise-node-sub">
-                            {season.year || "--"} • {season.episodes ? `${season.episodes} eps` : "Ongoing"}
-                            {isDone ? " • Completed" : ""}
-                          </div>
-                        </div>
-                        {isCurrent ? (
-                          <span className="franchise-node-active-pill">CURRENT</span>
-                        ) : (
-                          <Link className="franchise-node-action" href={`/anime/${season.malId}/info`}>
-                            View Info →
-                          </Link>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Movies & Specials */}
-            {allExtras.length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <div className="franchise-group-title">Theatrical Films &amp; Specials</div>
-                <div className="franchise-nodes-list">
-                  {allExtras.map((extra) => (
-                    <div className="franchise-node-item" key={extra.malId}>
-                      <img className="franchise-node-thumb" src={extra.cover} alt={extra.title} />
-                      <div style={{ flex: 1 }}>
-                        <div className="franchise-node-title">{extra.title}</div>
-                        <div className="franchise-node-sub">
-                          {extra.type} • {extra.year || "--"}
-                        </div>
-                      </div>
-                      <Link className="franchise-node-action" href={`/anime/${extra.malId}/info`}>
-                        View Info →
-                      </Link>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Related Anime Series */}
-            {relatedAnime.length > 0 && (
-              <div style={{ marginBottom: 20 }}>
-                <div className="franchise-group-title">Related Anime Series &amp; Spin-Offs</div>
-                <div className="franchise-nodes-list">
-                  {relatedAnime.map((item) => (
-                    <div className="franchise-node-item" key={`${item.relation}-${item.mal_id}`}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                          <span className={`relation-chip ${item.relation.toLowerCase().replace(/\s+/g, "-")}`}>
-                            {item.relation}
-                          </span>
-                          <span className="franchise-node-title">{item.name}</span>
-                        </div>
-                      </div>
-                      <Link
-                        className="franchise-node-action"
-                        href={`/anime/${item.mal_id}/info`}
-                        title={`View ${item.name}`}
-                      >
-                        View Anime →
-                      </Link>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* ── Section 2: MANGA & PRINT PUBLICATIONS ── */}
-            <div className="franchise-section-divider" style={{ marginTop: 24 }}>
-              <span className="franchise-section-badge manga">Manga &amp; Print Publications</span>
-              <span className="franchise-section-count">
-                {(linkedManga ? 1 : 0) + relatedManga.length} Titles
-              </span>
-            </div>
-
-            {/* Linked Manga Adaptation */}
-            {linkedManga && (
-              <div style={{ marginBottom: 16 }}>
-                <div className="franchise-group-title">Source / Original Manga</div>
-                <div className="franchise-node-item">
-                  <img className="franchise-node-thumb" src={linkedManga.cover} alt={linkedManga.title} />
-                  <div style={{ flex: 1 }}>
-                    <div className="franchise-node-title">{linkedManga.title}</div>
-                    <div className="franchise-node-sub">
-                      {linkedManga.type} • {linkedManga.year || "--"}
-                      {linkedManga.chapters ? ` • ${linkedManga.chapters} chapters` : ""}
-                    </div>
-                  </div>
-                  <Link className="franchise-node-action manga" href={`/manga/${linkedManga.malId}/info`}>
-                    View Manga Info →
-                  </Link>
-                </div>
-              </div>
-            )}
-
-            {/* Related Manga & Light Novels */}
-            {relatedManga.length > 0 && (
-              <div>
-                <div className="franchise-group-title">Related Manga &amp; Light Novels</div>
-                <div className="franchise-nodes-list">
-                  {relatedManga.map((item) => (
-                    <div className="franchise-node-item" key={`${item.relation}-${item.mal_id}`}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                          <span className={`relation-chip ${item.relation.toLowerCase().replace(/\s+/g, "-")}`}>
-                            {item.relation}
-                          </span>
-                          <span className="franchise-node-title">{item.name}</span>
-                        </div>
-                      </div>
-                      <Link
-                        className="franchise-node-action manga"
-                        href={`/manga/${item.mal_id}/info`}
-                        title={`View ${item.name}`}
-                      >
-                        View Manga →
-                      </Link>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Trailer Modal */}
       {showTrailerModal && media?.trailer_url && (

@@ -72,12 +72,33 @@ export default function MangaTrackerPage() {
   const rawId = Array.isArray(params?.id) ? params.id[0] : params?.id;
   const mangaId = rawId ? Number(rawId) : Number.NaN;
 
-  const [media, setMedia] = useState<OkamiMedia | null>(null);
+  const [media, setMedia] = useState<OkamiMedia | null>(() => {
+    const all = loadEntries();
+    const found = all.find((item) => item.id === mangaId && item.type === "manga");
+    if (found) {
+      return {
+        id: found.id,
+        type: "manga",
+        title: found.title,
+        cover: found.cover,
+        year: found.year,
+        format: found.format,
+        genres: found.genres || [],
+        official_score: found.official_score,
+        total: found.total,
+        synopsis: found.notes || "",
+      };
+    }
+    return null;
+  });
   const [volumes, setVolumes] = useState<MangaVolumeItem[]>([]);
   const [characters, setCharacters] = useState<JikanCharacter[]>([]);
   const [franchiseGraph, setFranchiseGraph] = useState<FranchiseGraph | null>(null);
   const [relatedList, setRelatedList] = useState<JikanRelation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(() => {
+    const all = loadEntries();
+    return !all.some((item) => item.id === mangaId && item.type === "manga");
+  });
   const [activeInfoTab, setActiveInfoTab] = useState<"overview" | "characters" | "franchise">("overview");
 
   const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
@@ -260,8 +281,10 @@ export default function MangaTrackerPage() {
 
     Promise.resolve().then(() => {
       if (!active) return;
-      setLoading(true);
-      setMedia(null);
+      if (!entry) {
+        setLoading(true);
+        setMedia(null);
+      }
       setVolumes([]);
       setCharacters([]);
       setFranchiseGraph(null);
@@ -270,29 +293,31 @@ export default function MangaTrackerPage() {
 
     const load = async () => {
       try {
-        const [detail, volData, cast, graph, related] = await Promise.all([
-          fetchDetail("manga", mangaId),
-          fetchVolumes(mangaId).catch(() => ({ totalVolumes: null, totalChapters: null, status: "", volumes: [], pictures: [] })),
-          fetchCharacters(mangaId, "manga").catch(() => []),
-          fetchFranchiseGraph(mangaId, "manga").catch(() => null),
-          fetchRelated("manga", mangaId).catch(() => []),
-        ]);
+        const detail = await fetchDetail("manga", mangaId);
         if (!active) return;
         setMedia(detail);
-        setVolumes(volData.volumes);
-        setCharacters(cast);
-        setFranchiseGraph(graph);
-        setRelatedList(related);
+        setLoading(false);
       } catch {
         if (!active) return;
-        setMedia(null);
-        setVolumes([]);
-        setCharacters([]);
-        setFranchiseGraph(null);
-        setRelatedList([]);
-      } finally {
-        if (active) setLoading(false);
+        setLoading(false);
       }
+
+      // Stream in volumes, cast, franchise graph, and related in parallel
+      fetchVolumes(mangaId)
+        .then((volData) => { if (active && volData?.volumes) setVolumes(volData.volumes); })
+        .catch(() => {});
+
+      fetchCharacters(mangaId, "manga")
+        .then((cast) => { if (active && cast) setCharacters(cast); })
+        .catch(() => {});
+
+      fetchFranchiseGraph(mangaId, "manga")
+        .then((graph) => { if (active && graph) setFranchiseGraph(graph); })
+        .catch(() => {});
+
+      fetchRelated("manga", mangaId)
+        .then((related) => { if (active && related) setRelatedList(related); })
+        .catch(() => {});
     };
 
     load();
@@ -300,7 +325,7 @@ export default function MangaTrackerPage() {
     return () => {
       active = false;
     };
-  }, [mangaId]);
+  }, [mangaId, entry]);
 
   // Find linked anime adaptation if any
   const linkedAnimeSeason = franchiseGraph?.seasons?.[0] ?? franchiseGraph?.extras?.[0] ?? null;

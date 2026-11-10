@@ -73,10 +73,31 @@ export default function AnimeDetailPage() {
 
   // Currently viewed anime / season
   const [selectedSeasonId, setSelectedSeasonId] = useState<number>(animeId);
-  const [media, setMedia] = useState<OkamiMedia | null>(null);
+  const [media, setMedia] = useState<OkamiMedia | null>(() => {
+    const all = loadEntries();
+    const found = all.find((item) => item.id === animeId && item.type === "anime");
+    if (found) {
+      return {
+        id: found.id,
+        type: "anime",
+        title: found.title,
+        cover: found.cover,
+        year: found.year,
+        format: found.format,
+        genres: found.genres || [],
+        official_score: found.official_score,
+        total: found.total,
+        synopsis: found.notes || "",
+      };
+    }
+    return null;
+  });
   const [characters, setCharacters] = useState<JikanCharacter[]>([]);
   const [franchiseGraph, setFranchiseGraph] = useState<FranchiseGraph | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(() => {
+    const all = loadEntries();
+    return !all.some((item) => item.id === animeId && item.type === "anime");
+  });
 
   const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
   const [franchises, setFranchises] = useState<Record<string, UnifiedFranchiseEntry>>(() =>
@@ -397,8 +418,10 @@ export default function AnimeDetailPage() {
 
     Promise.resolve().then(() => {
       if (!active) return;
-      setLoading(true);
-      setMedia(null);
+      if (!entry) {
+        setLoading(true);
+        setMedia(null);
+      }
       setCharacters([]);
       setFranchiseGraph(null);
       setRelatedList([]);
@@ -407,25 +430,26 @@ export default function AnimeDetailPage() {
     const load = async () => {
       try {
         const detail = await fetchDetail("anime", animeId);
-        const [cast, graph, related] = await Promise.all([
-          fetchCharacters(animeId, "anime").catch(() => []),
-          fetchFranchiseGraph(animeId, "anime").catch(() => null),
-          fetchRelated("anime", animeId).catch(() => []),
-        ]);
         if (!active) return;
         setMedia(detail);
-        setCharacters(cast);
-        setFranchiseGraph(graph);
-        setRelatedList(related);
+        setLoading(false);
       } catch {
         if (!active) return;
-        setMedia(null);
-        setCharacters([]);
-        setFranchiseGraph(null);
-        setRelatedList([]);
-      } finally {
-        if (active) setLoading(false);
+        setLoading(false);
       }
+
+      // Stream in cast, franchise graph, and related in parallel in the background
+      fetchCharacters(animeId, "anime")
+        .then((cast) => { if (active && cast) setCharacters(cast); })
+        .catch(() => {});
+
+      fetchFranchiseGraph(animeId, "anime")
+        .then((graph) => { if (active && graph) setFranchiseGraph(graph); })
+        .catch(() => {});
+
+      fetchRelated("anime", animeId)
+        .then((related) => { if (active && related) setRelatedList(related); })
+        .catch(() => {});
     };
 
     load();
@@ -433,7 +457,7 @@ export default function AnimeDetailPage() {
     return () => {
       active = false;
     };
-  }, [animeId]);
+  }, [animeId, entry]);
 
   // Compute Total Franchise Progress across all seasons
   const franchiseStats = useMemo(() => {

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { JikanEpisode, JikanRelation, MangaVolumeItem, MediaType, OkamiMedia } from "./lib/jikan";
 import { formatMediaNumberDisplay } from "./lib/jikan";
-import { fetchDetail, fetchEpisodes, fetchFranchiseGraph, fetchRelated, fetchSeason, fetchSeasonDetailed, fetchTop, fetchTopDetailed, fetchVolumes, searchMedia } from "./lib/api";
+import { fetchDetail, fetchEpisodes, fetchFranchiseGraph, fetchRelated, fetchSeason, fetchSeasonDetailed, fetchTop, fetchTopDetailed, fetchVolumes, searchMedia, prefetchMedia } from "./lib/api";
 import {
   addEntry,
   type OkamiEntry,
@@ -679,6 +679,24 @@ function LibraryView({
     [franchises, entries]
   );
 
+  const handleOpenItem = (item: UnifiedLibraryItem) => {
+    if (item.isFolder) {
+      onOpenFolder(item);
+    } else {
+      onDetail({
+        id: item.activeMalId,
+        type: item.type === "manga" ? "manga" : "anime",
+        title: item.title,
+        cover: item.cover,
+        year: item.year,
+        format: item.format,
+        genres: item.genres,
+        official_score: item.official_score,
+        total: item.totalNum,
+      });
+    }
+  };
+
   const displayedItems = useMemo(() => {
     let result = [...unifiedItems];
 
@@ -935,7 +953,7 @@ function LibraryView({
                   const targetItem = unifiedItems.find(
                     (it) => it.id === h.franchiseId || it.rootMalId === h.malId
                   );
-                  if (targetItem) onOpenTracker(targetItem);
+                  if (targetItem) handleOpenItem(targetItem);
                 }}
               >
                 {h.coverImage && (
@@ -1108,17 +1126,24 @@ function LibraryView({
                 : item.progressLabel;
 
             return (
-              <article className={`card ${item.isFolder ? "is-folder" : ""}`} key={item.id}>
+              <article
+                className={`card ${item.isFolder ? "is-folder" : ""}`}
+                key={item.id}
+                onMouseEnter={() => {
+                  if (!item.isFolder) {
+                    prefetchMedia(item.type === "manga" ? "manga" : "anime", item.activeMalId);
+                  }
+                }}
+              >
                 <div
                   className="card-img-wrap"
                   role="button"
                   tabIndex={0}
-                  onClick={() => (item.isFolder ? onOpenFolder(item) : onOpenTracker(item))}
+                  onClick={() => handleOpenItem(item)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      if (item.isFolder) onOpenFolder(item);
-                      else onOpenTracker(item);
+                      handleOpenItem(item);
                     }
                   }}
                 >
@@ -1363,8 +1388,8 @@ function LibraryView({
                   </div>
                 ) : (
                   <Link
-                    aria-label={`Open tracker for ${item.title}`}
-                    href={isManga ? `/manga/${item.activeMalId}` : `/anime/${item.activeMalId}`}
+                    aria-label={`Open details for ${item.title}`}
+                    href={isManga ? `/manga/${item.activeMalId}/info` : `/anime/${item.activeMalId}/info`}
                   >
                     <img className="row-cover" src={item.cover} alt={item.title} />
                   </Link>
@@ -1549,7 +1574,11 @@ function ExploreMediaCard({
   const category = entryCategory(media.type, media.format);
 
   return (
-    <article className={`card ${isSelected ? "multi-selected" : ""}`} key={mediaKey(media)}>
+    <article
+      className={`card ${isSelected ? "multi-selected" : ""}`}
+      key={mediaKey(media)}
+      onMouseEnter={() => prefetchMedia(media.type, media.id)}
+    >
       <div
         className="card-img-wrap"
         role="button"
@@ -2394,7 +2423,8 @@ function ExploreView({
       status,
       null,
       `Bundled ${selectedList.length} titles from catalog multi-select`,
-      finalTitle
+      finalTitle,
+      true
     );
 
     onCommitFranchises(updatedFranchises);
@@ -2506,55 +2536,58 @@ function ExploreView({
 
   const loadDiscovery = useCallback(() => {
     let active = true;
-    Promise.resolve().then(() => {
-      if (!active) return;
-      setLoadingTop(true);
-      setTopError(false);
-    });
 
+
+    // If we already have items in state, don't flash a full loading screen
+    if (seasonal.length === 0 && topAnime.length === 0 && topManga.length === 0) {
+      // If we already have items in state, don't flash a full loading screen
+      if (seasonal.length === 0 && topAnime.length === 0 && topManga.length === 0) {
+        setLoadingTop(true);
+      }
+    }
+    setTopError(false);
+
+    // Fast-path: Load top seasonal & top anime first to display content instantly (~200ms)
     Promise.all([
-      // Anime categories (up to 50 items each)
       fetchSeason({ limit: 50 }).catch(() => []),
       fetchTop("anime", { limit: 50 }).catch(() => []),
-      fetchTop("anime", { filter: "movie", limit: 50 }).catch(() => []),
-      searchMedia("anime", "", { genres: "Action", limit: 50 }).then(r => r.data).catch(() => []),
-      searchMedia("anime", "", { genres: "Psychological", limit: 50 }).then(r => r.data).catch(() => []),
+    ]).then(([seasonData, animeData]) => {
+      if (!active) return;
+      if (seasonData.length > 0) setSeasonal(seasonData);
+      if (animeData.length > 0) setTopAnime(animeData);
+      setLoadingTop(false);
+    });
 
-      // Manga categories (up to 50 items each)
+    // Stream in remaining anime categories
+    Promise.all([
+      fetchTop("anime", { filter: "movie", limit: 50 }).catch(() => []),
+      searchMedia("anime", "", { genres: "Action", limit: 50 }).then((r) => r.data).catch(() => []),
+      searchMedia("anime", "", { genres: "Psychological", limit: 50 }).then((r) => r.data).catch(() => []),
+    ]).then(([movieData, actAnimeData, psychData]) => {
+      if (!active) return;
+      setTopMovies(movieData);
+      setActionAnime(actAnimeData);
+      setPsychAnime(psychData);
+    });
+
+    // Stream in manga categories
+    Promise.all([
       fetchTop("manga", { limit: 50 }).catch(() => []),
       fetchTop("manga", { filter: "novels", limit: 50 }).catch(() => []),
-      searchMedia("manga", "", { genres: "Action", limit: 50 }).then(r => r.data).catch(() => []),
-      searchMedia("manga", "", { genres: "Romance", limit: 50 }).then(r => r.data).catch(() => []),
-    ])
-      .then(([seasonData, animeData, movieData, actAnimeData, psychData, mangaData, novelData, actMangaData, romMangaData]) => {
-        if (!active) return;
-        setSeasonal(seasonData);
-        setTopAnime(animeData);
-        setTopMovies(movieData);
-        setActionAnime(actAnimeData);
-        setPsychAnime(psychData);
-
-        setTopManga(mangaData);
-        setTopNovels(novelData);
-        setActionManga(actMangaData);
-        setRomanceManga(romMangaData);
-
-        if (seasonData.length === 0 && animeData.length === 0 && mangaData.length === 0) {
-          setTopError(true);
-        }
-      })
-      .catch(() => {
-        if (!active) return;
-        setTopError(true);
-      })
-      .finally(() => {
-        if (active) setLoadingTop(false);
-      });
+      searchMedia("manga", "", { genres: "Action", limit: 50 }).then((r) => r.data).catch(() => []),
+      searchMedia("manga", "", { genres: "Romance", limit: 50 }).then((r) => r.data).catch(() => []),
+    ]).then(([mangaData, novelData, actMangaData, romMangaData]) => {
+      if (!active) return;
+      setTopManga(mangaData);
+      setTopNovels(novelData);
+      setActionManga(actMangaData);
+      setRomanceManga(romMangaData);
+    });
 
     return () => {
       active = false;
     };
-  }, []);
+  }, [seasonal.length, topAnime.length, topManga.length]);
 
   const loadMoreBatches = async (catId: string) => {
     if (loadingBatchCategory) return;
@@ -4877,18 +4910,12 @@ function AddEntryModal({
         if (active) {
           setFranchiseOptions(options);
 
-          // Check if already in an existing franchise to preselect linked IDs
+          // Check if already in an existing explicit archive to keep linked IDs
           const existing = findFranchiseByMalId(loadFranchiseEntries(), media.id);
-          if (existing && Array.isArray(existing.linkedMalIds) && existing.linkedMalIds.length > 0) {
+          if (existing && (existing.isArchive || existing.isArchiveFolder) && Array.isArray(existing.linkedMalIds) && existing.linkedMalIds.length > 0) {
             setSelectedIds(new Set([media.id, ...existing.linkedMalIds]));
-          } else if (options.length > 1) {
-            // Pre-select all main anime seasons by default so multi-seasons are unified seamlessly
-            const canonIds = options
-              .filter((o) => o.type === media.type && o.seasonNumber !== undefined)
-              .map((o) => o.id);
-            if (canonIds.length > 0) {
-              setSelectedIds(new Set([media.id, ...canonIds]));
-            }
+          } else {
+            setSelectedIds(new Set([media.id]));
           }
         }
       } catch {
@@ -5262,20 +5289,20 @@ function AddEntryModal({
               </div>
             </>
           ) : (
-            /* If Anime: Pure Season-Level Tracking & Multi-Select (No episodes!) */
+            /* If Anime: Season-Level Tracking & Optional Related Titles */
             <div className="update-section multiselect-section">
               <div className="update-section-head">
                 <span className="update-section-label">
-                  01 / FRANCHISE SEASONS (MULTI-SELECT)
+                  01 / RELATED SEASONS (OPTIONAL)
                 </span>
                 <span className="multiselect-count-badge">
-                  {selectedCount} Selected • 1 Unified Entry
+                  {selectedCount} Selected
                 </span>
               </div>
 
               <div className="multiselect-toolbar">
                 <span style={{ fontSize: 11, color: "var(--text-3)" }}>
-                  Select multiple seasons to bundle as a single entry in your library:
+                  Related releases in this franchise (only current title selected by default):
                 </span>
                 {isMultiSeason && (
                   <div className="multiselect-quick-actions">
