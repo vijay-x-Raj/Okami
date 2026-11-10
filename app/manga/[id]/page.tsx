@@ -10,12 +10,14 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   FranchiseGraph,
   JikanCharacter,
+  JikanRelation,
   OkamiMedia,
 } from "@/app/lib/jikan";
 import {
   fetchCharacters,
   fetchDetail,
   fetchFranchiseGraph,
+  fetchRelated,
   fetchVolumes,
   type MangaVolumeItem,
 } from "@/app/lib/api";
@@ -74,6 +76,7 @@ export default function MangaTrackerPage() {
   const [volumes, setVolumes] = useState<MangaVolumeItem[]>([]);
   const [characters, setCharacters] = useState<JikanCharacter[]>([]);
   const [franchiseGraph, setFranchiseGraph] = useState<FranchiseGraph | null>(null);
+  const [relatedList, setRelatedList] = useState<JikanRelation[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeInfoTab, setActiveInfoTab] = useState<"overview" | "characters" | "franchise">("overview");
 
@@ -262,27 +265,31 @@ export default function MangaTrackerPage() {
       setVolumes([]);
       setCharacters([]);
       setFranchiseGraph(null);
+      setRelatedList([]);
     });
 
     const load = async () => {
       try {
-        const [detail, volData, cast, graph] = await Promise.all([
+        const [detail, volData, cast, graph, related] = await Promise.all([
           fetchDetail("manga", mangaId),
           fetchVolumes(mangaId).catch(() => ({ totalVolumes: null, totalChapters: null, status: "", volumes: [], pictures: [] })),
           fetchCharacters(mangaId, "manga").catch(() => []),
           fetchFranchiseGraph(mangaId, "manga").catch(() => null),
+          fetchRelated("manga", mangaId).catch(() => []),
         ]);
         if (!active) return;
         setMedia(detail);
         setVolumes(volData.volumes);
         setCharacters(cast);
         setFranchiseGraph(graph);
+        setRelatedList(related);
       } catch {
         if (!active) return;
         setMedia(null);
         setVolumes([]);
         setCharacters([]);
         setFranchiseGraph(null);
+        setRelatedList([]);
       } finally {
         if (active) setLoading(false);
       }
@@ -294,6 +301,53 @@ export default function MangaTrackerPage() {
       active = false;
     };
   }, [mangaId]);
+
+  // Find linked anime adaptation if any
+  const linkedAnimeSeason = franchiseGraph?.seasons?.[0] ?? franchiseGraph?.extras?.[0] ?? null;
+
+  // Percentage calculations
+  const chapterPercent =
+    totalChapters && totalChapters > 0
+      ? Math.min(100, Math.round((chaptersRead / totalChapters) * 100))
+      : 0;
+
+  const volumePercent =
+    totalVolumes && totalVolumes > 0
+      ? Math.min(100, Math.round((volumesRead / totalVolumes) * 100))
+      : 0;
+
+  const { relatedAnime, relatedManga } = useMemo(() => {
+    const existingAnimeIds = new Set([
+      ...(franchiseGraph?.seasons.map((s) => s.malId) || []),
+      ...(franchiseGraph?.extras.map((e) => e.malId) || []),
+    ]);
+    const existingMangaIds = new Set([
+      mangaId,
+      ...(franchiseGraph?.adaptations.map((a) => a.malId) || []),
+    ]);
+
+    const animes: Array<{ mal_id: number; name: string; relation: string }> = [];
+    const mangas: Array<{ mal_id: number; name: string; relation: string }> = [];
+
+    for (const group of relatedList) {
+      const rel = group.relation || "Related";
+      for (const item of group.entry || []) {
+        if (item.type === "anime") {
+          if (!existingAnimeIds.has(item.mal_id)) {
+            existingAnimeIds.add(item.mal_id);
+            animes.push({ mal_id: item.mal_id, name: item.name || "Untitled", relation: rel });
+          }
+        } else if (item.type === "manga") {
+          if (!existingMangaIds.has(item.mal_id)) {
+            existingMangaIds.add(item.mal_id);
+            mangas.push({ mal_id: item.mal_id, name: item.name || "Untitled", relation: rel });
+          }
+        }
+      }
+    }
+
+    return { relatedAnime: animes, relatedManga: mangas };
+  }, [relatedList, mangaId, franchiseGraph]);
 
   if (!Number.isFinite(mangaId)) {
     return (
@@ -309,18 +363,6 @@ export default function MangaTrackerPage() {
       </div>
     );
   }
-
-  // Find linked anime adaptation if any
-  const linkedAnimeSeason = franchiseGraph?.seasons?.[0] ?? franchiseGraph?.extras?.[0] ?? null;
-
-  // Percentage calculations
-  const chapterPercent = totalChapters && totalChapters > 0
-    ? Math.min(100, Math.round((chaptersRead / totalChapters) * 100))
-    : 0;
-
-  const volumePercent = totalVolumes && totalVolumes > 0
-    ? Math.min(100, Math.round((volumesRead / totalVolumes) * 100))
-    : 0;
 
   return (
     <div className="detail-page">
@@ -719,13 +761,13 @@ export default function MangaTrackerPage() {
             >
               Characters
             </button>
-            {franchiseGraph && (franchiseGraph.seasons.length > 0 || franchiseGraph.adaptations.length > 1) ? (
+            {franchiseGraph || relatedList.length > 0 ? (
               <button
                 className={`detail-tab ${activeInfoTab === "franchise" ? "active" : ""}`}
                 type="button"
                 onClick={() => setActiveInfoTab("franchise")}
               >
-                Franchise Hub
+                Franchise &amp; Related
               </button>
             ) : null}
           </div>
@@ -790,12 +832,70 @@ export default function MangaTrackerPage() {
               </div>
             ) : (
               <div className="detail-section">
-                <div className="detail-section-title">Franchise Media & Adaptations</div>
+                <div className="detail-section-title">Franchise Universe &amp; Related Series</div>
+
+                {/* ── Section 1: MANGA & PRINT PUBLICATIONS ── */}
+                <div className="franchise-section-divider">
+                  <span className="franchise-section-badge manga">Manga Publications</span>
+                  <span className="franchise-section-count">
+                    {1 + (franchiseGraph?.adaptations.filter((m) => m.malId !== mangaId).length || 0) + relatedManga.length} Titles
+                  </span>
+                </div>
+
+                {/* Other Adaptations & Related Manga */}
+                <div className="franchise-nodes-list" style={{ marginBottom: 20 }}>
+                  {franchiseGraph && franchiseGraph.adaptations.length > 1 && (
+                    franchiseGraph.adaptations
+                      .filter((m) => m.malId !== mangaId)
+                      .map((otherManga) => (
+                        <div className="franchise-node-item" key={otherManga.malId}>
+                          <img className="franchise-node-thumb" src={otherManga.cover} alt={otherManga.title} />
+                          <div style={{ flex: 1 }}>
+                            <div className="franchise-node-title">{otherManga.title}</div>
+                            <div className="franchise-node-sub">
+                              {otherManga.type} • {otherManga.year || "--"}
+                            </div>
+                          </div>
+                          <Link className="franchise-node-action" href={`/manga/${otherManga.malId}`}>
+                            Switch →
+                          </Link>
+                        </div>
+                      ))
+                  )}
+
+                  {relatedManga.map((item) => (
+                    <div className="franchise-node-item" key={`${item.relation}-${item.mal_id}`}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                          <span className={`relation-chip ${item.relation.toLowerCase().replace(/\s+/g, "-")}`}>
+                            {item.relation}
+                          </span>
+                          <span className="franchise-node-title">{item.name}</span>
+                        </div>
+                      </div>
+                      <Link
+                        className="franchise-node-action"
+                        href={`/manga/${item.mal_id}`}
+                        title={`View ${item.name}`}
+                      >
+                        View Manga →
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+
+                {/* ── Section 2: ANIME ADAPTATIONS & BROADCASTS ── */}
+                <div className="franchise-section-divider" style={{ marginTop: 24 }}>
+                  <span className="franchise-section-badge anime">Anime Adaptations</span>
+                  <span className="franchise-section-count">
+                    {(franchiseGraph?.seasons.length || 0) + (franchiseGraph?.extras.length || 0) + relatedAnime.length} Titles
+                  </span>
+                </div>
 
                 {/* Linked Anime Seasons */}
-                {franchiseGraph && franchiseGraph.seasons.length > 0 ? (
-                  <div style={{ marginBottom: 20 }}>
-                    <div className="franchise-group-title">Anime Seasons</div>
+                {franchiseGraph && franchiseGraph.seasons.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div className="franchise-group-title">Mainline TV Seasons</div>
                     <div className="franchise-nodes-list">
                       {franchiseGraph.seasons.map((season) => (
                         <div className="franchise-node-item" key={season.malId}>
@@ -808,39 +908,65 @@ export default function MangaTrackerPage() {
                               {season.year || "--"} • {season.episodes ? `${season.episodes} eps` : "Ongoing"}
                             </div>
                           </div>
-                          <Link className="franchise-node-action" href={`/anime/${season.malId}`}>
+                          <Link className="franchise-node-action anime" href={`/anime/${season.malId}`}>
                             Track Anime →
                           </Link>
                         </div>
                       ))}
                     </div>
                   </div>
-                ) : null}
+                )}
 
-                {/* Other Adaptations (Spinoffs/Novels) */}
-                {franchiseGraph && franchiseGraph.adaptations.length > 1 ? (
-                  <div>
-                    <div className="franchise-group-title">Related Manga & Light Novels</div>
+                {/* Anime Movies & Specials */}
+                {franchiseGraph && franchiseGraph.extras.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div className="franchise-group-title">Theatrical Movies &amp; Specials</div>
                     <div className="franchise-nodes-list">
-                      {franchiseGraph.adaptations
-                        .filter((m) => m.malId !== mangaId)
-                        .map((otherManga) => (
-                          <div className="franchise-node-item" key={otherManga.malId}>
-                            <img className="franchise-node-thumb" src={otherManga.cover} alt={otherManga.title} />
-                            <div style={{ flex: 1 }}>
-                              <div className="franchise-node-title">{otherManga.title}</div>
-                              <div className="franchise-node-sub">
-                                {otherManga.type} • {otherManga.year || "--"}
-                              </div>
+                      {franchiseGraph.extras.map((extra) => (
+                        <div className="franchise-node-item" key={extra.malId}>
+                          <img className="franchise-node-thumb" src={extra.cover} alt={extra.title} />
+                          <div style={{ flex: 1 }}>
+                            <div className="franchise-node-title">{extra.title}</div>
+                            <div className="franchise-node-sub">
+                              {extra.type} • {extra.year || "--"}
                             </div>
-                            <Link className="franchise-node-action" href={`/manga/${otherManga.malId}`}>
-                              Switch →
-                            </Link>
                           </div>
-                        ))}
+                          <Link className="franchise-node-action anime" href={`/anime/${extra.malId}`}>
+                            View Anime →
+                          </Link>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                ) : null}
+                )}
+
+                {/* Related Anime Series */}
+                {relatedAnime.length > 0 && (
+                  <div>
+                    <div className="franchise-group-title">Related Anime Series</div>
+                    <div className="franchise-nodes-list">
+                      {relatedAnime.map((item) => (
+                        <div className="franchise-node-item" key={`${item.relation}-${item.mal_id}`}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                              <span className={`relation-chip ${item.relation.toLowerCase().replace(/\s+/g, "-")}`}>
+                                {item.relation}
+                              </span>
+                              <span className="franchise-node-title">{item.name}</span>
+                            </div>
+                          </div>
+                          <Link
+                            className="franchise-node-action anime"
+                            href={`/anime/${item.mal_id}`}
+                            title={`View ${item.name}`}
+                          >
+                            View Anime →
+                          </Link>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

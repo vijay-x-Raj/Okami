@@ -1808,6 +1808,82 @@ body::after {
   text-transform: uppercase;
 }
 
+/* ─── Separated Anime & Manga Sections in Detail ─── */
+.franchise-section-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.franchise-section-badge {
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 3px;
+}
+
+.franchise-section-badge.anime {
+  background: rgba(232, 25, 75, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(232, 25, 75, 0.3);
+}
+
+.franchise-section-badge.manga {
+  background: rgba(43, 217, 199, 0.15);
+  color: var(--teal);
+  border: 1px solid rgba(43, 217, 199, 0.3);
+}
+
+.franchise-section-count {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.relation-chip {
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.relation-chip.prequel,
+.relation-chip.sequel {
+  background: rgba(196, 168, 79, 0.15);
+  color: var(--gold);
+  border: 1px solid rgba(196, 168, 79, 0.3);
+}
+
+.relation-chip.spin-off,
+.relation-chip.side-story {
+  background: rgba(141, 164, 208, 0.15);
+  color: #8da4d0;
+  border: 1px solid rgba(141, 164, 208, 0.3);
+}
+
+.relation-chip.adaptation {
+  background: rgba(43, 217, 199, 0.15);
+  color: var(--teal);
+  border: 1px solid rgba(43, 217, 199, 0.3);
+}
+
+.relation-chip.alternative {
+  background: var(--surface-4);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+
 /* Quick +1 Button on Card */
 .quick-action-row {
   display: flex;
@@ -3861,6 +3937,275 @@ body::after {
 .update-quick-step-btn:hover {
   background: var(--accent);
   color: #fff;
+}
+
+/* ─── Detail Page Canon Seasons Tracker Cards ─── */
+.season-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.season-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.season-card:hover {
+  background: var(--surface-3);
+  border-color: var(--border-hi);
+}
+
+.season-card.active {
+  border-color: var(--accent);
+  background: rgba(232, 25, 75, 0.05);
+}
+
+.season-card.completed {
+  border-left: 3px solid var(--teal);
+}
+
+.season-card-thumb {
+  width: 48px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 2px;
+  background: var(--surface-4);
+  flex-shrink: 0;
+}
+
+.season-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.season-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.season-card-format {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.season-status-tag {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.season-status-tag.completed {
+  background: rgba(43, 217, 199, 0.15);
+  color: var(--teal);
+  border: 1px solid rgba(43, 217, 199, 0.3);
+}
+
+.season-status-tag.watching {
+  background: rgba(232, 25, 75, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(232, 25, 75, 0.3);
+}
+
+.season-status-tag.plan_to_watch {
+  background: var(--surface-4);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+
+.season-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.season-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.season-action-btn {
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.season-action-btn:hover {
+  background: var(--surface-4);
+  color: var(--text-1);
+}
+
+.season-action-btn.active-done {
+  background: rgba(43, 217, 199, 0.2);
+  color: var(--teal);
+  border-color: var(--teal);
+  font-weight: 700;
+}
+
+.season-action-btn.active-watching {
+  background: rgba(232, 25, 75, 0.2);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+.season-action-btn.active-plan {
+  background: var(--surface-4);
+  color: var(--text-1);
+  border-color: var(--border-hi);
+}
+
+/* ─── Floating Catalog Multi-Select Batch Bar ─── */
+.catalog-batch-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px 20px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-hi);
+  border-radius: 6px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.7);
+  min-width: 480px;
+  max-width: 90vw;
+  animation: slideUpBatch 0.2s ease-out;
+}
+
+@keyframes slideUpBatch {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 16px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.batch-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.batch-badge {
+  background: var(--accent);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.batch-btn {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.batch-btn.primary {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #fff;
+}
+
+.batch-btn.primary:hover {
+  opacity: 0.9;
+}
+
+.batch-btn.secondary {
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text-1);
+}
+
+.batch-btn.secondary:hover {
+  background: var(--surface-4);
+}
+
+.batch-btn.ghost {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-3);
+}
+
+.batch-btn.ghost:hover {
+  color: var(--text-1);
+}
+
+/* Checkbox on Catalog cards when in Multi-Select mode */
+.card-select-overlay {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: rgba(10, 11, 14, 0.85);
+  border: 1px solid var(--border-hi);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.card-select-overlay.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.card.multi-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 /* ─── Detail Page Manual Episode Tracker Bar ─── */

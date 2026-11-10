@@ -1043,10 +1043,10 @@ function LibraryView({
             const formattedProgress =
               numberingMode === "absolute" && item.franchise && !isManga
                 ? formatMediaNumberDisplay({
-                    mediaType: "anime",
-                    number: item.progressNum,
-                    mode: "absolute",
-                  })
+                  mediaType: "anime",
+                  number: item.progressNum,
+                  mode: "absolute",
+                })
                 : item.progressLabel;
 
             return (
@@ -1161,8 +1161,8 @@ function LibraryView({
                     <span className="meta-dot">•</span>
                     <span>{item.format}</span>
                     {item.franchise &&
-                    (Object.keys(item.franchise.anime?.seasons || {}).length > 1 ||
-                      Object.keys(item.franchise.manga?.series || {}).length > 1) ? (
+                      (Object.keys(item.franchise.anime?.seasons || {}).length > 1 ||
+                        Object.keys(item.franchise.manga?.series || {}).length > 1) ? (
                       <>
                         <span className="meta-dot">•</span>
                         <span className="franchise-part-count-pill">
@@ -1345,12 +1345,18 @@ function ExploreMediaCard({
   onAdd,
   onDetail,
   index,
+  isMultiSelect,
+  isSelected,
+  onToggleSelect,
 }: {
   media: OkamiMedia;
   entryMap: Map<string, OkamiEntry>;
   onAdd: (media: OkamiMedia) => void;
   onDetail: (media: OkamiMedia) => void;
   index?: number;
+  isMultiSelect?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (media: OkamiMedia) => void;
 }) {
   const inLibrary = entryMap.has(mediaKey(media));
   const isAnime = media.type === "anime";
@@ -1359,16 +1365,26 @@ function ExploreMediaCard({
   const category = entryCategory(media.type, media.format);
 
   return (
-    <article className="card" key={mediaKey(media)}>
+    <article className={`card ${isSelected ? "multi-selected" : ""}`} key={mediaKey(media)}>
       <div
         className="card-img-wrap"
         role="button"
         tabIndex={0}
-        onClick={() => onDetail(media)}
+        onClick={() => {
+          if (isMultiSelect) {
+            onToggleSelect?.(media);
+          } else {
+            onDetail(media);
+          }
+        }}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            onDetail(media);
+            if (isMultiSelect) {
+              onToggleSelect?.(media);
+            } else {
+              onDetail(media);
+            }
           }
         }}
       >
@@ -1379,6 +1395,21 @@ function ExploreMediaCard({
           loading="lazy"
         />
         <div className="card-img-overlay" />
+
+        {/* Multi-Select Checkbox overlay */}
+        {isMultiSelect ? (
+          <button
+            type="button"
+            className={`card-select-overlay ${isSelected ? "selected" : ""}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleSelect?.(media);
+            }}
+            title={isSelected ? "Deselect" : "Select title"}
+          >
+            {isSelected ? "✓" : ""}
+          </button>
+        ) : null}
 
         {/* Score badge at top right */}
         <div className={`score-badge ${isHighScoring ? "gold" : ""}`}>
@@ -1392,20 +1423,33 @@ function ExploreMediaCard({
 
         {/* Actions overlay on hover */}
         <div className="card-actions">
-          <button
-            className={`card-action-btn ${inLibrary ? "in-library" : "primary"}`}
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              if (inLibrary) {
-                onDetail(media);
-              } else {
-                onAdd(media);
-              }
-            }}
-          >
-            {inLibrary ? "In Vault ✓" : "+ Add"}
-          </button>
+          {isMultiSelect ? (
+            <button
+              className={`card-action-btn ${isSelected ? "in-library" : "primary"}`}
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleSelect?.(media);
+              }}
+            >
+              {isSelected ? "✓ Selected" : "+ Select"}
+            </button>
+          ) : (
+            <button
+              className={`card-action-btn ${inLibrary ? "in-library" : "primary"}`}
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (inLibrary) {
+                  onDetail(media);
+                } else {
+                  onAdd(media);
+                }
+              }}
+            >
+              {inLibrary ? "In Vault ✓" : "+ Add"}
+            </button>
+          )}
           <button
             className="card-action-btn"
             type="button"
@@ -1452,6 +1496,9 @@ function ExploreCategorySection({
   onLoadMoreBatches,
   hasMoreBatches,
   loadingMoreBatches,
+  isMultiSelect,
+  selectedCatalogMap,
+  onToggleCatalogItem,
 }: {
   title: string;
   items: OkamiMedia[];
@@ -1462,6 +1509,9 @@ function ExploreCategorySection({
   onLoadMoreBatches?: () => Promise<void> | void;
   hasMoreBatches?: boolean;
   loadingMoreBatches?: boolean;
+  isMultiSelect?: boolean;
+  selectedCatalogMap?: Map<number, OkamiMedia>;
+  onToggleCatalogItem?: (media: OkamiMedia) => void;
 }) {
   const [batchPage, setBatchPage] = useState(1);
   const pageSize = 10; // 2 rows of 5 columns
@@ -1543,6 +1593,9 @@ function ExploreCategorySection({
             onAdd={onAdd}
             onDetail={onDetail}
             index={(batchPage - 1) * pageSize + idx}
+            isMultiSelect={isMultiSelect}
+            isSelected={selectedCatalogMap?.has(item.id)}
+            onToggleSelect={onToggleCatalogItem}
           />
         ))}
       </div>
@@ -1568,12 +1621,18 @@ function DedicatedCategoryView({
   onAdd,
   onDetail,
   onBack,
+  isMultiSelect,
+  selectedCatalogMap,
+  onToggleCatalogItem,
 }: {
   category: ExploreCategoryConfig;
   entryMap: Map<string, OkamiEntry>;
   onAdd: (media: OkamiMedia) => void;
   onDetail: (media: OkamiMedia) => void;
   onBack: () => void;
+  isMultiSelect?: boolean;
+  selectedCatalogMap?: Map<number, OkamiMedia>;
+  onToggleCatalogItem?: (media: OkamiMedia) => void;
 }) {
   const [items, setItems] = useState<OkamiMedia[]>(category.initialItems || []);
   const [page, setPage] = useState(1);
@@ -1742,6 +1801,9 @@ function DedicatedCategoryView({
             onAdd={onAdd}
             onDetail={onDetail}
             index={idx}
+            isMultiSelect={isMultiSelect}
+            isSelected={selectedCatalogMap?.has(item.id)}
+            onToggleSelect={onToggleCatalogItem}
           />
         ))}
       </div>
@@ -1885,10 +1947,18 @@ function CustomHeroSlider({
 
 function ExploreView({
   entryMap,
+  entries,
+  franchises,
+  onCommitEntries,
+  onCommitFranchises,
   onAdd,
   onDetail,
 }: {
   entryMap: Map<string, OkamiEntry>;
+  entries: OkamiEntry[];
+  franchises: Record<string, UnifiedFranchiseEntry>;
+  onCommitEntries: (entries: OkamiEntry[]) => void;
+  onCommitFranchises: (franchises: Record<string, UnifiedFranchiseEntry>) => void;
   onAdd: (media: OkamiMedia) => void;
   onDetail: (media: OkamiMedia) => void;
 }) {
@@ -1902,6 +1972,133 @@ function ExploreView({
 
   const [activeCategoryView, setActiveCategoryView] = useState<ExploreCategoryConfig | null>(null);
   const [loadingBatchCategory, setLoadingBatchCategory] = useState<string | null>(null);
+
+  // Multi-Select Catalog State
+  const [isMultiSelect, setIsMultiSelect] = useState(false);
+  const [selectedCatalogMap, setSelectedCatalogMap] = useState<Map<number, OkamiMedia>>(new Map());
+
+  const handleToggleCatalogItem = (item: OkamiMedia) => {
+    setSelectedCatalogMap((prev) => {
+      const next = new Map(prev);
+      if (next.has(item.id)) {
+        next.delete(item.id);
+      } else {
+        next.set(item.id, item);
+      }
+      return next;
+    });
+  };
+
+  const handleClearSelected = () => {
+    setSelectedCatalogMap(new Map());
+  };
+
+  const handleAddSelectedAsUnified = () => {
+    const selectedList = Array.from(selectedCatalogMap.values());
+    if (selectedList.length === 0) return;
+
+    const primaryItem = selectedList[0];
+    const primaryOpt: FranchiseItemOption = {
+      id: primaryItem.id,
+      title: primaryItem.title,
+      type: primaryItem.type,
+      format: primaryItem.format || (primaryItem.type === "manga" ? "Manga" : "TV"),
+      total: primaryItem.total ?? null,
+      cover: primaryItem.cover,
+      relation: "Primary Release",
+      isCurrent: true,
+    };
+
+    const otherOpts: FranchiseItemOption[] = selectedList.map((m, idx) => ({
+      id: m.id,
+      title: m.title,
+      type: m.type,
+      format: m.format || (m.type === "manga" ? "Manga" : "TV"),
+      total: m.total ?? null,
+      cover: m.cover,
+      relation: idx === 0 ? "Primary Release" : `Season / Part ${idx + 1}`,
+      isCurrent: idx === 0,
+    }));
+
+    const { updatedFranchises } = bundleFranchiseEntries(
+      franchises,
+      primaryOpt,
+      otherOpts,
+      0,
+      "plan_to_watch",
+      null,
+      `Bundled ${selectedList.length} titles from catalog multi-select`
+    );
+
+    onCommitFranchises(updatedFranchises);
+
+    const nextEntries = [...entries];
+    const now = new Date().toISOString();
+    for (const m of selectedList) {
+      if (!nextEntries.some((e) => e.id === m.id && e.type === m.type)) {
+        nextEntries.push({
+          id: m.id,
+          type: m.type,
+          title: m.title,
+          cover: m.cover,
+          year: m.year,
+          format: m.format,
+          genres: m.genres,
+          official_score: m.official_score,
+          user_score: null,
+          status: "plan_to_watch",
+          progress: 0,
+          total: m.total ?? null,
+          completed_seasons: [],
+          completed_volumes: [],
+          completed_episodes: [],
+          date_added: now,
+          notes: `Franchise: ${primaryItem.title}`,
+          is_favourite: false,
+        });
+      }
+    }
+    onCommitEntries(nextEntries);
+
+    setSelectedCatalogMap(new Map());
+    setIsMultiSelect(false);
+  };
+
+  const handleAddSelectedIndividually = () => {
+    const selectedList = Array.from(selectedCatalogMap.values());
+    if (selectedList.length === 0) return;
+
+    const nextEntries = [...entries];
+    const now = new Date().toISOString();
+    for (const m of selectedList) {
+      if (!nextEntries.some((e) => e.id === m.id && e.type === m.type)) {
+        nextEntries.push({
+          id: m.id,
+          type: m.type,
+          title: m.title,
+          cover: m.cover,
+          year: m.year,
+          format: m.format,
+          genres: m.genres,
+          official_score: m.official_score,
+          user_score: null,
+          status: "plan_to_watch",
+          progress: 0,
+          total: m.total ?? null,
+          completed_seasons: [],
+          completed_volumes: [],
+          completed_episodes: [],
+          date_added: now,
+          notes: "",
+          is_favourite: false,
+        });
+      }
+    }
+    onCommitEntries(nextEntries);
+
+    setSelectedCatalogMap(new Map());
+    setIsMultiSelect(false);
+  };
 
   const [results, setResults] = useState<OkamiMedia[]>([]);
   const [page, setPage] = useState(1);
@@ -2193,7 +2390,7 @@ function ExploreView({
           <span className="page-title-kanji">探索</span>
           <span className="page-title-slash">/</span>
           <span className="page-title">EXPLORE</span>
-          <div className="view-toggle" style={{ marginLeft: "auto", display: "flex", gap: "6px" }}>
+          <div className="view-toggle" style={{ marginLeft: "auto", display: "flex", gap: "8px", alignItems: "center" }}>
             <button
               type="button"
               className={`pill pill-type type-anime ${activeType === "anime" ? "active" : ""}`}
@@ -2215,6 +2412,25 @@ function ExploreView({
               }}
             >
               Manga Catalog
+            </button>
+            <button
+              type="button"
+              className={`pill ${isMultiSelect ? "active" : ""}`}
+              style={{
+                borderColor: isMultiSelect ? "var(--accent)" : "var(--border)",
+                color: isMultiSelect ? "var(--accent)" : "var(--text-2)",
+                fontWeight: isMultiSelect ? 700 : 500,
+                background: isMultiSelect ? "rgba(232, 25, 75, 0.15)" : "var(--surface-2)",
+              }}
+              onClick={() => {
+                setIsMultiSelect(!isMultiSelect);
+                if (isMultiSelect) {
+                  setSelectedCatalogMap(new Map());
+                }
+              }}
+              title="Toggle multi-select mode to bundle or batch add titles from the catalog"
+            >
+              {isMultiSelect ? "✓ Multi-Select Active" : "☑ Multi-Select Catalog"}
             </button>
           </div>
         </div>
@@ -2438,6 +2654,9 @@ function ExploreView({
             onAdd={onAdd}
             onDetail={onDetail}
             onBack={() => setActiveCategoryView(null)}
+            isMultiSelect={isMultiSelect}
+            selectedCatalogMap={selectedCatalogMap}
+            onToggleCatalogItem={handleToggleCatalogItem}
           />
         ) : (
           <>
@@ -2470,6 +2689,9 @@ function ExploreView({
                   entryMap={entryMap}
                   onAdd={onAdd}
                   onDetail={onDetail}
+                  isMultiSelect={isMultiSelect}
+                  selectedCatalogMap={selectedCatalogMap}
+                  onToggleCatalogItem={handleToggleCatalogItem}
                   onViewAll={() =>
                     setActiveCategoryView({
                       id: "anime-season",
@@ -2493,6 +2715,9 @@ function ExploreView({
                   entryMap={entryMap}
                   onAdd={onAdd}
                   onDetail={onDetail}
+                  isMultiSelect={isMultiSelect}
+                  selectedCatalogMap={selectedCatalogMap}
+                  onToggleCatalogItem={handleToggleCatalogItem}
                   onViewAll={() =>
                     setActiveCategoryView({
                       id: "anime-top",
@@ -2516,6 +2741,9 @@ function ExploreView({
                   entryMap={entryMap}
                   onAdd={onAdd}
                   onDetail={onDetail}
+                  isMultiSelect={isMultiSelect}
+                  selectedCatalogMap={selectedCatalogMap}
+                  onToggleCatalogItem={handleToggleCatalogItem}
                   onViewAll={() =>
                     setActiveCategoryView({
                       id: "anime-movies",
@@ -2540,6 +2768,9 @@ function ExploreView({
                   entryMap={entryMap}
                   onAdd={onAdd}
                   onDetail={onDetail}
+                  isMultiSelect={isMultiSelect}
+                  selectedCatalogMap={selectedCatalogMap}
+                  onToggleCatalogItem={handleToggleCatalogItem}
                   onViewAll={() =>
                     setActiveCategoryView({
                       id: "anime-action",
@@ -2564,6 +2795,9 @@ function ExploreView({
                   entryMap={entryMap}
                   onAdd={onAdd}
                   onDetail={onDetail}
+                  isMultiSelect={isMultiSelect}
+                  selectedCatalogMap={selectedCatalogMap}
+                  onToggleCatalogItem={handleToggleCatalogItem}
                   onViewAll={() =>
                     setActiveCategoryView({
                       id: "anime-psych",
@@ -2590,6 +2824,9 @@ function ExploreView({
                   entryMap={entryMap}
                   onAdd={onAdd}
                   onDetail={onDetail}
+                  isMultiSelect={isMultiSelect}
+                  selectedCatalogMap={selectedCatalogMap}
+                  onToggleCatalogItem={handleToggleCatalogItem}
                   onViewAll={() =>
                     setActiveCategoryView({
                       id: "manga-top",
@@ -2613,6 +2850,9 @@ function ExploreView({
                   entryMap={entryMap}
                   onAdd={onAdd}
                   onDetail={onDetail}
+                  isMultiSelect={isMultiSelect}
+                  selectedCatalogMap={selectedCatalogMap}
+                  onToggleCatalogItem={handleToggleCatalogItem}
                   onViewAll={() =>
                     setActiveCategoryView({
                       id: "manga-novels",
@@ -2637,6 +2877,9 @@ function ExploreView({
                   entryMap={entryMap}
                   onAdd={onAdd}
                   onDetail={onDetail}
+                  isMultiSelect={isMultiSelect}
+                  selectedCatalogMap={selectedCatalogMap}
+                  onToggleCatalogItem={handleToggleCatalogItem}
                   onViewAll={() =>
                     setActiveCategoryView({
                       id: "manga-action",
@@ -2661,6 +2904,9 @@ function ExploreView({
                   entryMap={entryMap}
                   onAdd={onAdd}
                   onDetail={onDetail}
+                  isMultiSelect={isMultiSelect}
+                  selectedCatalogMap={selectedCatalogMap}
+                  onToggleCatalogItem={handleToggleCatalogItem}
                   onViewAll={() =>
                     setActiveCategoryView({
                       id: "manga-romance",
@@ -2726,6 +2972,9 @@ function ExploreView({
                     onAdd={onAdd}
                     onDetail={onDetail}
                     index={idx}
+                    isMultiSelect={isMultiSelect}
+                    isSelected={selectedCatalogMap.has(item.id)}
+                    onToggleSelect={handleToggleCatalogItem}
                   />
                 ))}
               </div>
@@ -2745,6 +2994,41 @@ function ExploreView({
             </>
           )}
         </>
+      )}
+
+      {/* ── Catalog Multi-Select Batch Bar ── */}
+      {selectedCatalogMap.size > 0 && (
+        <div className="catalog-batch-bar">
+          <div className="batch-info">
+            <span className="batch-badge">{selectedCatalogMap.size}</span>
+            <span>{selectedCatalogMap.size === 1 ? "TITLE" : "TITLES"} SELECTED</span>
+          </div>
+          <div className="batch-actions">
+            <button
+              type="button"
+              className="batch-btn ghost"
+              onClick={handleClearSelected}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="batch-btn secondary"
+              onClick={handleAddSelectedIndividually}
+              title="Add all selected titles as separate entries in your library"
+            >
+              + Add All Individually
+            </button>
+            <button
+              type="button"
+              className="batch-btn primary"
+              onClick={handleAddSelectedAsUnified}
+              title="Bundle all selected titles into 1 single unified franchise entry in your library"
+            >
+              + Add as 1 Unified Entry to Library
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -3807,7 +4091,6 @@ function AddEntryModal({
   const total = media?.total && media.total > 0 ? media.total : null;
   const isManga = media?.type === "manga";
   const unit = isManga ? "Chapters" : "Episodes";
-  const unitSingular = isManga ? "Chapter" : "Episode";
 
   const [progress, setProgress] = useState<number>(() => Math.max(0, entry?.progress ?? 0));
   const [status, setStatus] = useState<OkamiStatus>(() => entry?.status ?? "plan_to_watch");
@@ -3819,6 +4102,25 @@ function AddEntryModal({
   const [franchiseOptions, setFranchiseOptions] = useState<FranchiseItemOption[]>([]);
   const [loadingFranchise, setLoadingFranchise] = useState<boolean>(true);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set(media ? [media.id] : []));
+  const [completedSeasonIds, setCompletedSeasonIds] = useState<Set<number>>(() => {
+    const s = new Set<number>();
+    if (entry?.completed_seasons) {
+      entry.completed_seasons.forEach((id) => s.add(id));
+    }
+    return s;
+  });
+
+  const toggleSeasonDone = (seasonId: number) => {
+    setCompletedSeasonIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(seasonId)) {
+        next.delete(seasonId);
+      } else {
+        next.add(seasonId);
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -3980,7 +4282,7 @@ function AddEntryModal({
     return () => {
       active = false;
     };
-  }, [media?.id, media?.type, media?.title, media?.format, media?.total, media?.cover]);
+  }, [media]);
 
   if (!media) return null;
 
@@ -4106,251 +4408,358 @@ function AddEntryModal({
 
         {/* Scrollable Body */}
         <div className="update-drawer-body custom-scroll">
-          {/* 1. Episode / Chapter Tracker Section (No slider, supports infinite/ongoing) */}
-          <div className="update-section">
-            <div className="update-section-head">
-              <span className="update-section-label">
-                {isManga ? "01 / CHAPTER TRACKER" : "01 / EPISODE TRACKER"}
-              </span>
-              <span className={`update-section-badge ${percent === 100 ? "highlight" : ""}`}>
-                {total !== null ? `${percent}% COMPLETED` : "ONGOING RELEASE"}
-              </span>
-            </div>
+          {/* If Manga: Chapter Tracker Section */}
+          {isManga ? (
+            <>
+              <div className="update-section">
+                <div className="update-section-head">
+                  <span className="update-section-label">01 / CHAPTER TRACKER</span>
+                  <span className={`update-section-badge ${percent === 100 ? "highlight" : ""}`}>
+                    {total !== null ? `${percent}% COMPLETED` : "ONGOING RELEASE"}
+                  </span>
+                </div>
 
-            <div className="update-progress-display">
-              <div className="update-progress-numbers">
-                <span className="update-progress-num-big">{progress}</span>
-                <span className="update-progress-total-sub">
-                  / {total !== null ? total : "∞"} {unit.toLowerCase()}
-                </span>
+                <div className="update-progress-display">
+                  <div className="update-progress-numbers">
+                    <span className="update-progress-num-big">{progress}</span>
+                    <span className="update-progress-total-sub">
+                      / {total !== null ? total : "∞"} chapters
+                    </span>
+                  </div>
+                  <div className="update-progress-percent">
+                    {total !== null ? (
+                      remaining === 0 ? (
+                        <span style={{ color: "var(--teal)" }}>All Caught Up</span>
+                      ) : (
+                        <span>{remaining} chapters remaining</span>
+                      )
+                    ) : (
+                      <span style={{ color: "var(--gold)" }}>Ongoing Publication</span>
+                    )}
+                  </div>
+                </div>
+
+                {total !== null && total > 0 && (
+                  <div className="update-progress-meter-track">
+                    <div
+                      className="update-progress-meter-fill"
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                )}
+
+                <div className="update-steppers-row">
+                  <button
+                    type="button"
+                    className="update-stepper-btn"
+                    onClick={() => handleProgressChange(progress - 10)}
+                    disabled={progress <= 0}
+                    title="Back 10"
+                  >
+                    -10
+                  </button>
+                  <button
+                    type="button"
+                    className="update-stepper-btn"
+                    onClick={() => handleProgressChange(progress - 5)}
+                    disabled={progress <= 0}
+                    title="Back 5"
+                  >
+                    -5
+                  </button>
+                  <button
+                    type="button"
+                    className="update-stepper-btn"
+                    onClick={() => handleProgressChange(progress - 1)}
+                    disabled={progress <= 0}
+                    title="Back 1"
+                  >
+                    -1
+                  </button>
+
+                  <div className="update-direct-input-wrap" title="Directly enter chapter number">
+                    <input
+                      type="number"
+                      className="update-direct-input"
+                      min={0}
+                      max={total ?? 99999}
+                      value={inputVal}
+                      onChange={(e) => handleDirectInputChange(e.target.value)}
+                      onBlur={() => setInputVal(String(progress))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.currentTarget.blur();
+                        }
+                      }}
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    className="update-stepper-btn"
+                    onClick={() => handleProgressChange(progress + 1)}
+                    disabled={total !== null && progress >= total}
+                    title="Forward 1"
+                  >
+                    +1
+                  </button>
+                  <button
+                    type="button"
+                    className="update-stepper-btn"
+                    onClick={() => handleProgressChange(progress + 5)}
+                    disabled={total !== null && progress >= total}
+                    title="Forward 5"
+                  >
+                    +5
+                  </button>
+                  <button
+                    type="button"
+                    className="update-stepper-btn"
+                    onClick={() => handleProgressChange(progress + 10)}
+                    disabled={total !== null && progress >= total}
+                    title="Forward 10"
+                  >
+                    +10
+                  </button>
+                  {total !== null && (
+                    <button
+                      type="button"
+                      className="update-stepper-btn max-btn"
+                      onClick={() => handleProgressChange(total)}
+                      disabled={progress >= total}
+                      title="Mark as completed"
+                    >
+                      MAX
+                    </button>
+                  )}
+                </div>
+
+                <div className="update-quick-step-row">
+                  <button
+                    type="button"
+                    className="update-quick-step-btn"
+                    onClick={() => handleProgressChange(progress + 1)}
+                    disabled={total !== null && progress >= total}
+                  >
+                    +1 Chapter Read
+                  </button>
+                </div>
               </div>
-              <div className="update-progress-percent">
-                {total !== null ? (
-                  remaining === 0 ? (
-                    <span style={{ color: "var(--teal)" }}>All Caught Up</span>
-                  ) : (
-                    <span>{remaining} {remaining === 1 ? unitSingular : unit} remaining</span>
-                  )
+
+              {/* Manga Multiselect Volumes */}
+              <div className="update-section multiselect-section">
+                <div className="update-section-head">
+                  <span className="update-section-label">
+                    02 / MANGA EDITIONS (MULTI-SELECT)
+                  </span>
+                  <span className="multiselect-count-badge">
+                    {selectedCount} Selected • 1 Unified Entry
+                  </span>
+                </div>
+
+                <div className="multiselect-toolbar">
+                  <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+                    Selected manga parts appear as a single entry in your library:
+                  </span>
+                  {isMultiSeason && (
+                    <div className="multiselect-quick-actions">
+                      <button
+                        type="button"
+                        className="multiselect-quick-btn"
+                        onClick={selectAll}
+                      >
+                        All ({franchiseOptions.length})
+                      </button>
+                      <button
+                        type="button"
+                        className="multiselect-quick-btn"
+                        onClick={selectCurrentOnly}
+                      >
+                        Current
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {loadingFranchise ? (
+                  <div style={{ fontSize: 11, color: "var(--text-3)", padding: "10px 0" }}>
+                    Indexing manga editions...
+                  </div>
                 ) : (
-                  <span style={{ color: "var(--gold)" }}>Ongoing Broadcast • No Episode Limit</span>
+                  <div className="multiselect-list custom-scroll">
+                    {franchiseOptions.map((opt) => {
+                      const isChecked = selectedIds.has(opt.id);
+                      const isCurrent = opt.id === media.id;
+                      return (
+                        <div
+                          key={opt.id}
+                          className={`multiselect-item ${isChecked ? "selected" : ""} ${isCurrent ? "current" : ""}`}
+                          onClick={() => toggleSelectId(opt.id)}
+                        >
+                          <input
+                            type="checkbox"
+                            className="multiselect-checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleSelectId(opt.id)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <img
+                            className="multiselect-thumb"
+                            src={opt.cover}
+                            alt={opt.title}
+                          />
+                          <div className="multiselect-info">
+                            <div className="multiselect-title" title={opt.title}>
+                              {opt.title}
+                            </div>
+                            <div className="multiselect-meta">
+                              <span className={`multiselect-pill ${isCurrent ? "accent" : "gold"}`}>
+                                {opt.relation || opt.format}
+                              </span>
+                              <span>•</span>
+                              <span>{opt.total ? `${opt.total} chs` : "Ongoing"}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
-            </div>
-
-            {/* Static visual meter (only rendered if total is known) */}
-            {total !== null && total > 0 && (
-              <div className="update-progress-meter-track">
-                <div
-                  className="update-progress-meter-fill"
-                  style={{ width: `${percent}%` }}
-                />
-              </div>
-            )}
-
-            {/* Steppers & Direct Input Row */}
-            <div className="update-steppers-row">
-              <button
-                type="button"
-                className="update-stepper-btn"
-                onClick={() => handleProgressChange(progress - 10)}
-                disabled={progress <= 0}
-                title="Back 10"
-              >
-                -10
-              </button>
-              <button
-                type="button"
-                className="update-stepper-btn"
-                onClick={() => handleProgressChange(progress - 5)}
-                disabled={progress <= 0}
-                title="Back 5"
-              >
-                -5
-              </button>
-              <button
-                type="button"
-                className="update-stepper-btn"
-                onClick={() => handleProgressChange(progress - 1)}
-                disabled={progress <= 0}
-                title="Back 1"
-              >
-                -1
-              </button>
-
-              {/* Direct Numeric Input with no arbitrary clamp on infinite episodes */}
-              <div className="update-direct-input-wrap" title="Directly enter episode/chapter number">
-                <input
-                  type="number"
-                  className="update-direct-input"
-                  min={0}
-                  max={total ?? 99999}
-                  value={inputVal}
-                  onChange={(e) => handleDirectInputChange(e.target.value)}
-                  onBlur={() => setInputVal(String(progress))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.currentTarget.blur();
-                    }
-                  }}
-                />
+            </>
+          ) : (
+            /* If Anime: Pure Season-Level Tracking & Multi-Select (No episodes!) */
+            <div className="update-section multiselect-section">
+              <div className="update-section-head">
+                <span className="update-section-label">
+                  01 / FRANCHISE SEASONS (MULTI-SELECT)
+                </span>
+                <span className="multiselect-count-badge">
+                  {selectedCount} Selected • 1 Unified Entry
+                </span>
               </div>
 
-              <button
-                type="button"
-                className="update-stepper-btn"
-                onClick={() => handleProgressChange(progress + 1)}
-                disabled={total !== null && progress >= total}
-                title="Forward 1"
-              >
-                +1
-              </button>
-              <button
-                type="button"
-                className="update-stepper-btn"
-                onClick={() => handleProgressChange(progress + 5)}
-                disabled={total !== null && progress >= total}
-                title="Forward 5"
-              >
-                +5
-              </button>
-              <button
-                type="button"
-                className="update-stepper-btn"
-                onClick={() => handleProgressChange(progress + 10)}
-                disabled={total !== null && progress >= total}
-                title="Forward 10"
-              >
-                +10
-              </button>
-              {total !== null && (
-                <button
-                  type="button"
-                  className="update-stepper-btn max-btn"
-                  onClick={() => handleProgressChange(total)}
-                  disabled={progress >= total}
-                  title="Mark as completed"
-                >
-                  MAX
-                </button>
-              )}
-            </div>
+              <div className="multiselect-toolbar">
+                <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+                  Select multiple seasons to bundle as a single entry in your library:
+                </span>
+                {isMultiSeason && (
+                  <div className="multiselect-quick-actions">
+                    <button
+                      type="button"
+                      className="multiselect-quick-btn"
+                      onClick={selectAll}
+                      title="Select all related entries"
+                    >
+                      All ({franchiseOptions.length})
+                    </button>
+                    <button
+                      type="button"
+                      className="multiselect-quick-btn"
+                      onClick={selectCanonOnly}
+                      title="Select only canon seasons"
+                    >
+                      Canon
+                    </button>
+                    <button
+                      type="button"
+                      className="multiselect-quick-btn"
+                      onClick={selectCurrentOnly}
+                      title="Select current only"
+                    >
+                      Current
+                    </button>
+                  </div>
+                )}
+              </div>
 
-            {/* Quick Action Button for one-click increment */}
-            <div className="update-quick-step-row">
-              <button
-                type="button"
-                className="update-quick-step-btn"
-                onClick={() => handleProgressChange(progress + 1)}
-                disabled={total !== null && progress >= total}
-              >
-                +1 {unitSingular} Watched
-              </button>
-            </div>
-          </div>
-
-          {/* 2. Franchise Multi-Select Section */}
-          <div className="update-section multiselect-section">
-            <div className="update-section-head">
-              <span className="update-section-label">
-                02 / FRANCHISE SEASONS (MULTI-SELECT)
-              </span>
-              <span className="multiselect-count-badge">
-                {selectedCount} Selected • 1 Unified Entry
-              </span>
-            </div>
-
-            <div className="multiselect-toolbar">
-              <span style={{ fontSize: 11, color: "var(--text-3)" }}>
-                Selected seasons appear as a single entry in your library:
-              </span>
-              {isMultiSeason && (
-                <div className="multiselect-quick-actions">
-                  <button
-                    type="button"
-                    className="multiselect-quick-btn"
-                    onClick={selectAll}
-                    title="Select all related entries"
-                  >
-                    All ({franchiseOptions.length})
-                  </button>
-                  <button
-                    type="button"
-                    className="multiselect-quick-btn"
-                    onClick={selectCanonOnly}
-                    title="Select only canon seasons"
-                  >
-                    Canon
-                  </button>
-                  <button
-                    type="button"
-                    className="multiselect-quick-btn"
-                    onClick={selectCurrentOnly}
-                    title="Select current only"
-                  >
-                    Current
-                  </button>
+              {loadingFranchise ? (
+                <div style={{ fontSize: 11, color: "var(--text-3)", padding: "10px 0" }}>
+                  Indexing franchise canon & seasons...
+                </div>
+              ) : (
+                <div className="multiselect-list custom-scroll">
+                  {franchiseOptions.map((opt) => {
+                    const isChecked = selectedIds.has(opt.id);
+                    const isCurrent = opt.id === media.id;
+                    const isDone = completedSeasonIds.has(opt.id);
+                    return (
+                      <div
+                        key={opt.id}
+                        className={`multiselect-item ${isChecked ? "selected" : ""} ${isCurrent ? "current" : ""}`}
+                        onClick={() => toggleSelectId(opt.id)}
+                      >
+                        <input
+                          type="checkbox"
+                          className="multiselect-checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleSelectId(opt.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <img
+                          className="multiselect-thumb"
+                          src={opt.cover}
+                          alt={opt.title}
+                        />
+                        <div className="multiselect-info">
+                          <div className="multiselect-title" title={opt.title}>
+                            {opt.title}
+                          </div>
+                          <div className="multiselect-meta">
+                            <span className={`multiselect-pill ${isCurrent ? "accent" : opt.relation?.includes("Season") ? "gold" : ""}`}>
+                              {opt.relation || opt.format}
+                            </span>
+                            {opt.total ? (
+                              <>
+                                <span>•</span>
+                                <span>{opt.total} eps</span>
+                              </>
+                            ) : null}
+                            {isDone && (
+                              <>
+                                <span>•</span>
+                                <span style={{ color: "var(--teal)", fontWeight: 700 }}>COMPLETED</span>
+                              </>
+                            )}
+                            {isCurrent && (
+                              <>
+                                <span>•</span>
+                                <span style={{ color: "var(--accent)", fontWeight: 700 }}>ACTIVE</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div
+                          style={{ display: "flex", gap: "6px", alignItems: "center" }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            className={`season-action-btn ${isDone ? "active-done" : ""}`}
+                            style={{ fontSize: 10, padding: "3px 7px" }}
+                            onClick={() => {
+                              toggleSeasonDone(opt.id);
+                              if (!isChecked) toggleSelectId(opt.id);
+                            }}
+                            title={isDone ? "Mark season uncompleted" : "Mark season completed"}
+                          >
+                            {isDone ? "✓ Done" : "Done?"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
+          )}
 
-            {loadingFranchise ? (
-              <div style={{ fontSize: 11, color: "var(--text-3)", padding: "10px 0" }}>
-                Indexing franchise canon & seasons...
-              </div>
-            ) : (
-              <div className="multiselect-list custom-scroll">
-                {franchiseOptions.map((opt) => {
-                  const isChecked = selectedIds.has(opt.id);
-                  const isCurrent = opt.id === media.id;
-                  return (
-                    <div
-                      key={opt.id}
-                      className={`multiselect-item ${isChecked ? "selected" : ""} ${isCurrent ? "current" : ""}`}
-                      onClick={() => toggleSelectId(opt.id)}
-                    >
-                      <input
-                        type="checkbox"
-                        className="multiselect-checkbox"
-                        checked={isChecked}
-                        onChange={() => toggleSelectId(opt.id)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <img
-                        className="multiselect-thumb"
-                        src={opt.cover}
-                        alt={opt.title}
-                      />
-                      <div className="multiselect-info">
-                        <div className="multiselect-title" title={opt.title}>
-                          {opt.title}
-                        </div>
-                        <div className="multiselect-meta">
-                          <span className={`multiselect-pill ${isCurrent ? "accent" : opt.relation?.includes("Season") ? "gold" : ""}`}>
-                            {opt.relation || opt.format}
-                          </span>
-                          <span>•</span>
-                          <span>
-                            {opt.total ? `${opt.total} ${opt.type === "manga" ? "chs" : "eps"}` : "Ongoing"}
-                          </span>
-                          {isCurrent && (
-                            <>
-                              <span>•</span>
-                              <span style={{ color: "var(--accent)", fontWeight: 700 }}>ACTIVE</span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* 3. Status Section */}
+          {/* Tracking Status Section */}
           <div className="update-section">
             <div className="update-section-head">
-              <span className="update-section-label">03 / TRACKING STATUS</span>
+              <span className="update-section-label">
+                {isManga ? "03 / TRACKING STATUS" : "02 / TRACKING STATUS"}
+              </span>
               <span className="update-section-badge">
                 {status.replace("_", " ").toUpperCase()}
               </span>
@@ -4363,13 +4772,13 @@ function AddEntryModal({
                   ? isWatchingOpt
                     ? "Reading"
                     : isPlanOpt
-                    ? "Plan to Read"
-                    : opt.label
+                      ? "Plan to Read"
+                      : opt.label
                   : isWatchingOpt
-                  ? "Watching"
-                  : isPlanOpt
-                  ? "Plan to Watch"
-                  : opt.label;
+                    ? "Watching"
+                    : isPlanOpt
+                      ? "Plan to Watch"
+                      : opt.label;
 
                 return (
                   <button
@@ -4385,10 +4794,12 @@ function AddEntryModal({
             </div>
           </div>
 
-          {/* 4. Score Section */}
+          {/* Rating Section */}
           <div className="update-section">
             <div className="update-section-head">
-              <span className="update-section-label">04 / PERSONAL RATING</span>
+              <span className="update-section-label">
+                {isManga ? "04 / PERSONAL RATING" : "03 / PERSONAL RATING"}
+              </span>
               {userScore ? (
                 <span className="update-score-header-val">
                   {userScore} / 10 — {scoreLabels[userScore]}
@@ -4421,16 +4832,18 @@ function AddEntryModal({
             )}
           </div>
 
-          {/* 5. Notes Section */}
+          {/* Notes Section */}
           <div className="update-section">
             <div className="update-section-head">
-              <span className="update-section-label">05 / PRIVATE MEMO</span>
+              <span className="update-section-label">
+                {isManga ? "05 / PRIVATE MEMO" : "04 / PRIVATE MEMO"}
+              </span>
               <span className="update-section-badge">{notes.length} CHARS</span>
             </div>
             <textarea
               className="update-notes-textarea custom-scroll"
               rows={3}
-              placeholder="Add impressions, episode bookmarks, or personal reflections..."
+              placeholder="Add impressions, bookmarks, or personal reflections..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />
@@ -4459,12 +4872,13 @@ function AddEntryModal({
               type="button"
               onClick={() => {
                 const selectedItems = franchiseOptions.filter((opt) => selectedIds.has(opt.id));
+                const completedArray = Array.from(completedSeasonIds);
                 onSave({
                   status,
                   userScore,
                   notes,
-                  progress,
-                  completedSeasons: entry?.completed_seasons || [],
+                  progress: isManga ? progress : completedArray.length,
+                  completedSeasons: completedArray,
                   completedVolumes: entry?.completed_volumes || [],
                   selectedFranchiseItems: selectedItems.length > 0 ? selectedItems : undefined,
                 });
@@ -4826,26 +5240,88 @@ function DetailPanel({
             ) : relatedItems.length === 0 ? (
               <div className="detail-empty">No related titles found.</div>
             ) : (
-              <div className="related-grid">
-                {relatedItems.map((item) => {
-                  const key = `${item.type}:${item.id}`;
-                  const isInLibrary = entryMap.has(key);
-                  return (
-                    <div className="related-card" key={key}>
-                      <div className="related-title">{item.name}</div>
-                      <div className="related-meta">{item.relation}</div>
-                      <button
-                        className={`card-action-btn ${isInLibrary ? "in-library" : "primary"}`}
-                        type="button"
-                        onClick={() =>
-                          isInLibrary ? onSelectRelated(item.type, item.id) : onAddRelated(item.type, item.id)
-                        }
-                      >
-                        {isInLibrary ? "In Library ✓" : "+ Add"}
-                      </button>
+              <div>
+                {/* ── Section 1: Related Anime Series ── */}
+                {relatedItems.filter((i) => i.type === "anime").length > 0 && (
+                  <div style={{ marginBottom: 20 }}>
+                    <div className="franchise-section-divider" style={{ margin: "8px 0 12px" }}>
+                      <span className="franchise-section-badge anime">Anime Releases</span>
+                      <span className="franchise-section-count">
+                        {relatedItems.filter((i) => i.type === "anime").length} Titles
+                      </span>
                     </div>
-                  );
-                })}
+                    <div className="related-grid">
+                      {relatedItems
+                        .filter((item) => item.type === "anime")
+                        .map((item) => {
+                          const key = `${item.type}:${item.id}`;
+                          const isInLibrary = entryMap.has(key);
+                          return (
+                            <div className="related-card" key={key}>
+                              <div className="related-title">{item.name}</div>
+                              <div className="related-meta">
+                                <span className={`relation-chip ${item.relation.toLowerCase().replace(/\s+/g, "-")}`}>
+                                  {item.relation}
+                                </span>
+                              </div>
+                              <button
+                                className={`card-action-btn ${isInLibrary ? "in-library" : "primary"}`}
+                                type="button"
+                                onClick={() =>
+                                  isInLibrary
+                                    ? onSelectRelated(item.type, item.id)
+                                    : onAddRelated(item.type, item.id)
+                                }
+                              >
+                                {isInLibrary ? "In Library ✓" : "+ Add"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section 2: Related Manga & Light Novels ── */}
+                {relatedItems.filter((i) => i.type === "manga").length > 0 && (
+                  <div>
+                    <div className="franchise-section-divider" style={{ margin: "8px 0 12px" }}>
+                      <span className="franchise-section-badge manga">Manga Publications</span>
+                      <span className="franchise-section-count">
+                        {relatedItems.filter((i) => i.type === "manga").length} Titles
+                      </span>
+                    </div>
+                    <div className="related-grid">
+                      {relatedItems
+                        .filter((item) => item.type === "manga")
+                        .map((item) => {
+                          const key = `${item.type}:${item.id}`;
+                          const isInLibrary = entryMap.has(key);
+                          return (
+                            <div className="related-card" key={key}>
+                              <div className="related-title">{item.name}</div>
+                              <div className="related-meta">
+                                <span className={`relation-chip ${item.relation.toLowerCase().replace(/\s+/g, "-")}`}>
+                                  {item.relation}
+                                </span>
+                              </div>
+                              <button
+                                className={`card-action-btn ${isInLibrary ? "in-library" : "primary"}`}
+                                type="button"
+                                onClick={() =>
+                                  isInLibrary
+                                    ? onSelectRelated(item.type, item.id)
+                                    : onAddRelated(item.type, item.id)
+                                }
+                              >
+                                {isInLibrary ? "In Library ✓" : "+ Add"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -5008,17 +5484,24 @@ export default function Home() {
     if (!modalState) return;
     const { media, entry } = modalState;
     const now = new Date().toISOString();
+    const isManga = media.type === "manga";
 
-    const maxTotal = media.total && media.total > 0 ? media.total : Infinity;
-    const clampedProgress = Math.max(0, Math.min(data.progress, maxTotal));
-
-    // Mihon auto-state transitions:
     let finalStatus = data.status;
-    if (clampedProgress > 0 && finalStatus === "plan_to_watch") {
-      finalStatus = "watching";
-    }
-    if (media.total && clampedProgress >= media.total) {
-      finalStatus = "completed";
+    let clampedProgress = data.progress;
+
+    if (isManga) {
+      const maxTotal = media.total && media.total > 0 ? media.total : Infinity;
+      clampedProgress = Math.max(0, Math.min(data.progress, maxTotal));
+      if (clampedProgress > 0 && finalStatus === "plan_to_watch") {
+        finalStatus = "watching";
+      }
+      if (media.total && clampedProgress >= media.total) {
+        finalStatus = "completed";
+      }
+    } else {
+      if (data.completedSeasons.length > 0 && finalStatus === "plan_to_watch") {
+        finalStatus = "watching";
+      }
     }
 
     const nextEntry: OkamiEntry = {
@@ -5036,7 +5519,7 @@ export default function Home() {
       total: media.total ?? null,
       completed_seasons: data.completedSeasons,
       completed_volumes: data.completedVolumes,
-      completed_episodes: Array.from({ length: clampedProgress }, (_, i) => i + 1),
+      completed_episodes: isManga ? Array.from({ length: clampedProgress }, (_, i) => i + 1) : [],
       date_added: entry?.date_added ?? now,
       notes: data.notes,
       is_favourite: entry?.is_favourite ?? false,
@@ -5073,6 +5556,28 @@ export default function Home() {
       data.userScore,
       data.notes
     );
+
+    // If specific seasons were marked completed in data.completedSeasons:
+    if (data.completedSeasons.length > 0 && updatedFranchises[franchiseId]?.anime?.seasons) {
+      const animeSeasons = { ...updatedFranchises[franchiseId].anime!.seasons };
+      for (const sId of data.completedSeasons) {
+        if (animeSeasons[sId]) {
+          animeSeasons[sId] = {
+            ...animeSeasons[sId],
+            status: "COMPLETED",
+            completedAt: Date.now(),
+          };
+        }
+      }
+      updatedFranchises[franchiseId] = {
+        ...updatedFranchises[franchiseId],
+        anime: {
+          ...updatedFranchises[franchiseId].anime!,
+          seasons: animeSeasons,
+        },
+      };
+    }
+
     commitFranchises(updatedFranchises);
 
     // Append to Mihon append-only history log
@@ -5328,6 +5833,10 @@ export default function Home() {
               {activeNav === "Explore" ? (
                 <ExploreView
                   entryMap={entryMap}
+                  entries={entries}
+                  franchises={franchises}
+                  onCommitEntries={commitEntries}
+                  onCommitFranchises={commitFranchises}
                   onAdd={(media) => setModalState({ media })}
                   onDetail={openInfo}
                 />

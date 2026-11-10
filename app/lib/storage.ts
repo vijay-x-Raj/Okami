@@ -1489,6 +1489,76 @@ export interface FranchiseDisplayInfo {
   updatedAt: number;
 }
 
+// ─── Advance Season (Mark current season completed, advance to next) ───
+
+export function advanceSeason(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  seasonMalId?: number
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  if (!franchise?.anime?.seasons) return entries;
+
+  const currentSeason = seasonMalId
+    ? franchise.anime.seasons[seasonMalId]
+    : franchise.anime.activeSeasonMalId
+      ? franchise.anime.seasons[franchise.anime.activeSeasonMalId]
+      : Object.values(franchise.anime.seasons)[0];
+
+  if (!currentSeason) return entries;
+
+  const now = Date.now();
+  const sortedSeasons = Object.values(franchise.anime.seasons).sort(
+    (a, b) => a.seasonNumber - b.seasonNumber
+  );
+
+  const updatedSeasons: Record<number, SeasonProgress | SeasonTrack> = {
+    ...franchise.anime.seasons,
+    [currentSeason.malId]: {
+      ...currentSeason,
+      status: "COMPLETED",
+      completedAt: now,
+      updatedAt: now,
+    },
+  };
+
+  const nextSeason = sortedSeasons.find(
+    (s) => s.seasonNumber > currentSeason.seasonNumber && s.status !== "COMPLETED"
+  );
+
+  let activeSeasonMalId = currentSeason.malId;
+  if (nextSeason) {
+    activeSeasonMalId = nextSeason.malId;
+    updatedSeasons[nextSeason.malId] = {
+      ...updatedSeasons[nextSeason.malId],
+      status: "WATCHING",
+      startedAt: updatedSeasons[nextSeason.malId].startedAt || now,
+      updatedAt: now,
+    };
+  }
+
+  const allCompleted = Object.values(updatedSeasons).every((s) => s.status === "COMPLETED");
+  const overallStatus: WatchStatus = allCompleted ? "COMPLETED" : "WATCHING";
+
+  const nextFranchises: Record<string, UnifiedFranchiseEntry> = {
+    ...entries,
+    [franchiseId]: {
+      ...franchise,
+      updatedAt: now,
+      completedAt: allCompleted ? now : franchise.completedAt,
+      anime: {
+        ...franchise.anime,
+        activeSeasonMalId,
+        overallStatus,
+        seasons: updatedSeasons,
+      },
+    },
+  };
+
+  saveFranchiseEntries(nextFranchises);
+  return nextFranchises;
+}
+
 export function getFranchiseDisplayInfo(
   franchise: UnifiedFranchiseEntry
 ): FranchiseDisplayInfo {
@@ -1516,24 +1586,23 @@ export function getFranchiseDisplayInfo(
       ? franchise.anime.seasons[activeSeasonMalId]
       : animeSeasons[0];
 
-    // Compute unwatched badge count across all franchise seasons
-    for (const season of animeSeasons) {
-      if (season.totalEpisodes > 0) {
-        totalAvailable += season.totalEpisodes;
-        const diff = Math.max(0, season.totalEpisodes - season.episodesWatched);
-        unwatchedCount += diff;
-      }
-      totalProgress += season.episodesWatched || 0;
-    }
+    const completedSeasonsCount = animeSeasons.filter((s) => s.status === "COMPLETED").length;
+    totalAvailable = totalSeasons;
+    totalProgress = completedSeasonsCount;
+    unwatchedCount = Math.max(0, totalSeasons - completedSeasonsCount);
 
     if (activeSeason) {
       activeSeasonNumber = activeSeason.seasonNumber;
       activeSeasonMalId = activeSeason.malId;
-      const totalLabel = activeSeason.totalEpisodes > 0 ? String(activeSeason.totalEpisodes) : "∞";
-      progressLabel =
-        totalSeasons > 1
-          ? `S${activeSeason.seasonNumber} • Ep ${activeSeason.episodesWatched}/${totalLabel}`
-          : `Ep ${activeSeason.episodesWatched}/${totalLabel}`;
+      if (totalSeasons > 1) {
+        if (overallStatus === "completed") {
+          progressLabel = `Completed (${totalSeasons} Seasons)`;
+        } else {
+          progressLabel = `S${activeSeason.seasonNumber} • ${completedSeasonsCount}/${totalSeasons} Seasons`;
+        }
+      } else {
+        progressLabel = overallStatus === "completed" ? "Completed" : `Season ${activeSeason.seasonNumber}`;
+      }
     }
   } else if (hasManga && franchise.manga) {
     const activeManga = activeMangaMalId

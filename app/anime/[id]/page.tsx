@@ -10,27 +10,22 @@ import { useEffect, useMemo, useState } from "react";
 import {
   type FranchiseGraph,
   type JikanCharacter,
-  type JikanEpisode,
+  type JikanRelation,
   type OkamiMedia,
-  parseMediaNumber,
-  formatMediaNumberDisplay,
 } from "@/app/lib/jikan";
 import {
   fetchCharacters,
   fetchDetail,
-  fetchEpisodes,
   fetchFranchiseGraph,
+  fetchRelated,
 } from "@/app/lib/api";
 import {
   addEntry,
-  bulkWatchEpisodes,
   getFranchiseByMalId,
   loadEntries,
   loadFranchiseEntries,
-  markSeasonCompleted,
   saveEntries,
   saveFranchiseEntries,
-  toggleEpisode as storageToggleEpisode,
   updateEntry,
   type OkamiEntry,
   type OkamiStatus,
@@ -76,33 +71,25 @@ export default function AnimeDetailPage() {
   const rawId = Array.isArray(params?.id) ? params.id[0] : params?.id;
   const animeId = rawId ? Number(rawId) : Number.NaN;
 
-  // Currently viewed anime & episodes (can switch between seasons)
+  // Currently viewed anime / season
   const [selectedSeasonId, setSelectedSeasonId] = useState<number>(animeId);
   const [media, setMedia] = useState<OkamiMedia | null>(null);
-  const [episodes, setEpisodes] = useState<JikanEpisode[]>([]);
-  const [episodePage, setEpisodePage] = useState<number>(1);
-  const [pagination, setPagination] = useState<{ last_visible_page: number; has_next_page: boolean }>({
-    last_visible_page: 1,
-    has_next_page: false,
-  });
   const [characters, setCharacters] = useState<JikanCharacter[]>([]);
   const [franchiseGraph, setFranchiseGraph] = useState<FranchiseGraph | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadingEpisodes, setLoadingEpisodes] = useState(false);
 
   const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
   const [franchises, setFranchises] = useState<Record<string, UnifiedFranchiseEntry>>(() =>
     loadFranchiseEntries()
   );
+  const [relatedList, setRelatedList] = useState<JikanRelation[]>([]);
   const [activeInfoTab, setActiveInfoTab] = useState<"overview" | "characters" | "seasons">("overview");
-  const [numberingMode, setNumberingMode] = useState<"relative" | "absolute">("relative");
 
   // Keep selectedSeasonId synchronized to animeId on initial navigation
   useEffect(() => {
     if (Number.isFinite(animeId)) {
       Promise.resolve().then(() => {
         setSelectedSeasonId(animeId);
-        setEpisodePage(1);
       });
     }
   }, [animeId]);
@@ -122,11 +109,17 @@ export default function AnimeDetailPage() {
   const currentSeasonProgress: SeasonProgress | undefined =
     franchise?.anime?.seasons?.[selectedSeasonId];
 
-  const completedEpisodes = useMemo(() => {
-    return currentSeasonProgress?.watchedEpisodeIds ?? entry?.completed_episodes ?? [];
-  }, [currentSeasonProgress, entry]);
-
-  const seasonStatus: OkamiStatus = entry?.status ?? (currentSeasonProgress?.status === "WATCHING" ? "watching" : currentSeasonProgress?.status === "COMPLETED" ? "completed" : currentSeasonProgress?.status === "ON_HOLD" ? "on_hold" : currentSeasonProgress?.status === "DROPPED" ? "dropped" : "plan_to_watch");
+  const seasonStatus: OkamiStatus =
+    entry?.status ??
+    (currentSeasonProgress?.status === "WATCHING"
+      ? "watching"
+      : currentSeasonProgress?.status === "COMPLETED"
+        ? "completed"
+        : currentSeasonProgress?.status === "ON_HOLD"
+          ? "on_hold"
+          : currentSeasonProgress?.status === "DROPPED"
+            ? "dropped"
+            : "plan_to_watch");
 
   const commitEntries = (next: OkamiEntry[]) => {
     saveEntries(next);
@@ -138,18 +131,146 @@ export default function AnimeDetailPage() {
     setFranchises(next);
   };
 
-  // Synchronize season progress to UnifiedFranchiseEntry
-  const syncFranchiseState = (
-    seasonId: number,
-    epsWatched: number,
-    totalEps: number,
-    stat: OkamiStatus,
-    watchedIds: number[]
-  ) => {
-    if (!franchiseGraph) return;
-
-    const franchiseId = franchiseGraph.franchiseId;
+  // Toggle or set season status (COMPLETED, WATCHING, PLAN_TO_WATCH)
+  const handleToggleSeasonStatus = (seasonMalId: number, targetStatus: WatchStatus) => {
     const now = getNow();
+    const isTargetViewed = seasonMalId === selectedSeasonId;
+    const currentMedia = isTargetViewed ? media : null;
+
+    const mappedEntryStatus: OkamiStatus =
+      targetStatus === "COMPLETED"
+        ? "completed"
+        : targetStatus === "WATCHING"
+          ? "watching"
+          : targetStatus === "ON_HOLD"
+            ? "on_hold"
+            : targetStatus === "DROPPED"
+              ? "dropped"
+              : "plan_to_watch";
+
+    // 1. Update Unified Franchise Entry
+    if (franchiseGraph) {
+      const franchiseId = franchiseGraph.franchiseId;
+      const targetSeasonNode = franchiseGraph.seasons.find((s) => s.malId === seasonMalId);
+      const extraNode = franchiseGraph.extras.find((e) => e.malId === seasonMalId);
+      const seasonNumber = targetSeasonNode ? targetSeasonNode.seasonNumber : 1;
+
+      const currentFranchise = franchises[franchiseId] ?? {
+        franchiseId,
+        rootMalId: franchiseGraph.rootMalId,
+        title: franchiseGraph.title,
+        coverImage: franchiseGraph.cover,
+        bannerImage: franchiseGraph.bannerImage ?? undefined,
+        genres: media?.genres || [],
+        addedAt: now,
+        updatedAt: now,
+        isFavorite: false,
+        linkedMalIds: [franchiseGraph.rootMalId, ...franchiseGraph.seasons.map((s) => s.malId)],
+        anime: {
+          overallStatus: "PLAN_TO_WATCH" as WatchStatus,
+          activeSeasonMalId: seasonMalId,
+          seasons: {},
+        },
+      };
+
+      const existingSeason = currentFranchise.anime?.seasons?.[seasonMalId];
+      const totalEpisodes =
+        targetSeasonNode?.episodes ??
+        extraNode?.episodes ??
+        (isTargetViewed ? media?.total ?? 12 : 12);
+
+      const epsWatched =
+        targetStatus === "COMPLETED"
+          ? totalEpisodes
+          : targetStatus === "WATCHING"
+            ? Math.max(1, existingSeason?.episodesWatched || 1)
+            : 0;
+
+      const updatedSeason: SeasonProgress = {
+        malId: seasonMalId,
+        title:
+          targetSeasonNode?.title ??
+          extraNode?.title ??
+          (isTargetViewed ? media?.title ?? `Season ${seasonNumber}` : `Season ${seasonNumber}`),
+        titleEnglish:
+          targetSeasonNode?.titleEnglish ??
+          (isTargetViewed ? media?.title_english ?? null : null),
+        coverImage:
+          targetSeasonNode?.cover ??
+          extraNode?.cover ??
+          (isTargetViewed ? media?.cover ?? "" : ""),
+        type:
+          (targetSeasonNode?.type as "TV" | "Movie" | "OVA" | "Special" | "ONA") ??
+          (extraNode?.type as "TV" | "Movie" | "OVA" | "Special" | "ONA") ??
+          "TV",
+        seasonNumber,
+        episodesWatched: epsWatched,
+        totalEpisodes,
+        watchedEpisodeIds:
+          targetStatus === "COMPLETED"
+            ? Array.from({ length: totalEpisodes }, (_, i) => i + 1)
+            : [],
+        status: targetStatus,
+        score: existingSeason?.score ?? 0,
+        notes: existingSeason?.notes || "",
+        updatedAt: now,
+        completedAt: targetStatus === "COMPLETED" ? now : undefined,
+      };
+
+      const seasonsMap: Record<number, SeasonProgress> = {
+        ...(currentFranchise.anime?.seasons ?? {}),
+        [seasonMalId]: updatedSeason,
+      };
+
+      const allCompleted = Object.values(seasonsMap).every((s) => s.status === "COMPLETED");
+      const anyWatching = Object.values(seasonsMap).some((s) => s.status === "WATCHING");
+      const overallStatus: WatchStatus = allCompleted
+        ? "COMPLETED"
+        : anyWatching
+          ? "WATCHING"
+          : "PLAN_TO_WATCH";
+
+      const nextFranchise: UnifiedFranchiseEntry = {
+        ...currentFranchise,
+        updatedAt: now,
+        completedAt: allCompleted ? now : currentFranchise.completedAt,
+        anime: {
+          overallStatus,
+          activeSeasonMalId: seasonMalId,
+          seasons: seasonsMap,
+        },
+      };
+
+      commitFranchises({
+        ...franchises,
+        [franchiseId]: nextFranchise,
+      });
+    }
+
+    // 2. Update local library entries
+    const existingEntry = entries.find((e) => e.id === seasonMalId && e.type === "anime");
+    let nextEntries: OkamiEntry[];
+
+    if (existingEntry) {
+      nextEntries = updateEntry(entries, seasonMalId, "anime", {
+        status: mappedEntryStatus,
+      });
+      commitEntries(nextEntries);
+    } else if (currentMedia) {
+      const nextEntry = {
+        ...buildEntry(currentMedia),
+        status: mappedEntryStatus,
+      };
+      nextEntries = addEntry(entries, nextEntry);
+      commitEntries(nextEntries);
+    }
+  };
+
+  const handleMarkAllSeasonsComplete = () => {
+    if (!franchiseGraph) return;
+    const now = getNow();
+    const franchiseId = franchiseGraph.franchiseId;
+
     const currentFranchise = franchises[franchiseId] ?? {
       franchiseId,
       rootMalId: franchiseGraph.rootMalId,
@@ -162,62 +283,44 @@ export default function AnimeDetailPage() {
       isFavorite: false,
       linkedMalIds: [franchiseGraph.rootMalId, ...franchiseGraph.seasons.map((s) => s.malId)],
       anime: {
-        overallStatus: "PLAN_TO_WATCH" as WatchStatus,
-        activeSeasonMalId: seasonId,
+        overallStatus: "COMPLETED" as WatchStatus,
+        activeSeasonMalId: selectedSeasonId,
         seasons: {},
       },
     };
 
-    const watchStat: WatchStatus =
-      stat === "watching"
-        ? "WATCHING"
-        : stat === "completed"
-          ? "COMPLETED"
-          : stat === "on_hold"
-            ? "ON_HOLD"
-            : stat === "dropped"
-              ? "DROPPED"
-              : "PLAN_TO_WATCH";
-
-    const targetSeasonNode = franchiseGraph.seasons.find((s) => s.malId === seasonId);
-    const seasonNumber = targetSeasonNode ? targetSeasonNode.seasonNumber : 1;
-
-    const updatedSeason: SeasonProgress = {
-      malId: seasonId,
-      title: media?.title ?? targetSeasonNode?.title ?? `Season ${seasonNumber}`,
-      titleEnglish: media?.title_english ?? targetSeasonNode?.titleEnglish ?? null,
-      coverImage: media?.cover ?? targetSeasonNode?.cover ?? "",
-      type: (targetSeasonNode?.type as "TV" | "Movie" | "OVA" | "Special" | "ONA") ?? "TV",
-      seasonNumber,
-      episodesWatched: epsWatched,
-      totalEpisodes: totalEps,
-      watchedEpisodeIds: watchedIds,
-      status: watchStat,
-      score: entry?.user_score ?? 0,
-      notes: entry?.notes || "",
-      updatedAt: now,
-    };
-
-    const seasonsMap: Record<number, SeasonProgress> = {
+    const updatedSeasons: Record<number, SeasonProgress> = {
       ...(currentFranchise.anime?.seasons ?? {}),
-      [seasonId]: updatedSeason,
     };
 
-    const allCompleted = Object.values(seasonsMap).every((s) => s.status === "COMPLETED");
-    const anyWatching = Object.values(seasonsMap).some((s) => s.status === "WATCHING");
-    const overallStatus: WatchStatus = allCompleted
-      ? "COMPLETED"
-      : anyWatching || epsWatched > 0
-        ? "WATCHING"
-        : "PLAN_TO_WATCH";
+    for (const s of franchiseGraph.seasons) {
+      const eps = s.episodes ?? 12;
+      updatedSeasons[s.malId] = {
+        malId: s.malId,
+        title: s.title,
+        titleEnglish: s.titleEnglish ?? null,
+        coverImage: s.cover,
+        type: (s.type as "TV" | "Movie" | "OVA" | "Special" | "ONA") ?? "TV",
+        seasonNumber: s.seasonNumber,
+        episodesWatched: eps,
+        totalEpisodes: eps,
+        watchedEpisodeIds: Array.from({ length: eps }, (_, i) => i + 1),
+        status: "COMPLETED",
+        score: updatedSeasons[s.malId]?.score ?? 0,
+        notes: updatedSeasons[s.malId]?.notes || "",
+        updatedAt: now,
+        completedAt: now,
+      };
+    }
 
     const nextFranchise: UnifiedFranchiseEntry = {
       ...currentFranchise,
       updatedAt: now,
+      completedAt: now,
       anime: {
-        overallStatus,
-        activeSeasonMalId: seasonId,
-        seasons: seasonsMap,
+        overallStatus: "COMPLETED",
+        activeSeasonMalId: selectedSeasonId,
+        seasons: updatedSeasons,
       },
     };
 
@@ -225,163 +328,64 @@ export default function AnimeDetailPage() {
       ...franchises,
       [franchiseId]: nextFranchise,
     });
-  };
 
-  const applyEntryPatch = (patch: Partial<OkamiEntry>) => {
-    if (!media) return;
-    let nextEntries: OkamiEntry[];
-    let updatedProgress = entry?.progress ?? 0;
-    let updatedStatus = entry?.status ?? DEFAULT_STATUS;
-    let updatedWatched = entry?.completed_episodes ?? [];
-
-    if (patch.progress !== undefined) updatedProgress = patch.progress;
-    if (patch.status !== undefined) updatedStatus = patch.status;
-    if (patch.completed_episodes !== undefined) updatedWatched = patch.completed_episodes;
-
-    if (entry) {
-      nextEntries = updateEntry(entries, entry.id, entry.type, patch);
-      commitEntries(nextEntries);
-    } else {
-      const nextEntry = { ...buildEntry(media), ...patch };
-      nextEntries = addEntry(entries, nextEntry);
-      commitEntries(nextEntries);
+    let nextEntries = [...entries];
+    for (const s of franchiseGraph.seasons) {
+      const existing = nextEntries.find((e) => e.id === s.malId && e.type === "anime");
+      if (existing) {
+        nextEntries = updateEntry(nextEntries, s.malId, "anime", {
+          status: "completed",
+        });
+      }
     }
 
-    syncFranchiseState(
-      selectedSeasonId,
-      updatedProgress,
-      media.total ?? 0,
-      updatedStatus,
-      updatedWatched
-    );
+    if (entry) {
+      nextEntries = updateEntry(nextEntries, entry.id, "anime", {
+        status: "completed",
+      });
+    } else if (media) {
+      nextEntries = addEntry(nextEntries, {
+        ...buildEntry(media),
+        status: "completed",
+      });
+    }
+
+    commitEntries(nextEntries);
   };
 
   const handleAdd = () => {
     if (!media || entry) return;
     const nextEntry = buildEntry(media);
     commitEntries(addEntry(entries, nextEntry));
-    syncFranchiseState(selectedSeasonId, 0, media.total ?? 0, DEFAULT_STATUS, []);
-  };
-
-  const toggleEpisode = (epNumber: number) => {
-    if (franchiseGraph) {
-      const nextFranchises = storageToggleEpisode(
-        franchises,
-        franchiseGraph.franchiseId,
-        selectedSeasonId,
-        epNumber
-      );
-      commitFranchises(nextFranchises);
-    }
-
-    const nextWatched = completedEpisodes.includes(epNumber)
-      ? completedEpisodes.filter((n) => n !== epNumber)
-      : [...completedEpisodes, epNumber].sort((a, b) => a - b);
-
-    const total = media?.total ?? (episodes.length > 0 ? episodes.length : 0);
-    const isCompleted = total > 0 && nextWatched.length >= total;
-    const newStatus: OkamiStatus = isCompleted
-      ? "completed"
-      : nextWatched.length > 0
-        ? "watching"
-        : seasonStatus;
-
-    applyEntryPatch({
-      completed_episodes: nextWatched,
-      progress: nextWatched.length,
-      status: newStatus,
-    });
-  };
-
-  const handleWatchUpTo = (epNumber: number) => {
-    if (franchiseGraph) {
-      const nextFranchises = bulkWatchEpisodes(
-        franchises,
-        franchiseGraph.franchiseId,
-        selectedSeasonId,
-        epNumber
-      );
-      commitFranchises(nextFranchises);
-    }
-
-    const watchedSet = new Set<number>();
-    for (let i = 1; i <= epNumber; i++) {
-      watchedSet.add(i);
-    }
-    const nextWatched = Array.from(watchedSet).sort((a, b) => a - b);
-    const total = media?.total ?? 0;
-    const isCompleted = total > 0 && nextWatched.length >= total;
-
-    applyEntryPatch({
-      completed_episodes: nextWatched,
-      progress: nextWatched.length,
-      status: isCompleted ? "completed" : "watching",
-    });
-  };
-
-  const handleMarkSeasonComplete = () => {
-    const total = media?.total ?? (episodes.length > 0 ? episodes.length : 12);
-    if (franchiseGraph) {
-      const nextFranchises = markSeasonCompleted(
-        franchises,
-        franchiseGraph.franchiseId,
-        selectedSeasonId,
-        total
-      );
-      commitFranchises(nextFranchises);
-    }
-
-    const allEps = Array.from({ length: total }, (_, i) => i + 1);
-    applyEntryPatch({
-      completed_episodes: allEps,
-      progress: allEps.length,
-      status: "completed",
-    });
+    handleToggleSeasonStatus(selectedSeasonId, "PLAN_TO_WATCH");
   };
 
   const handleStatusChange = (value: OkamiStatus) => {
-    applyEntryPatch({ status: value });
+    const targetWatchStatus: WatchStatus =
+      value === "watching"
+        ? "WATCHING"
+        : value === "completed"
+          ? "COMPLETED"
+          : value === "on_hold"
+            ? "ON_HOLD"
+            : value === "dropped"
+              ? "DROPPED"
+              : "PLAN_TO_WATCH";
+    handleToggleSeasonStatus(selectedSeasonId, targetWatchStatus);
   };
 
   // Switch season inside tracker
   const handleSelectSeason = async (seasonMalId: number) => {
     if (seasonMalId === selectedSeasonId) return;
     setSelectedSeasonId(seasonMalId);
-    setEpisodePage(1);
-    setLoadingEpisodes(true);
 
     try {
       const newDetail = await fetchDetail("anime", seasonMalId);
-      const epData = await fetchEpisodes(seasonMalId, 1, {
-        total: newDetail?.total ?? 0,
-        status: newDetail?.status,
-      });
-      setMedia(newDetail);
-      setEpisodes(epData.episodes);
-      setPagination(epData.pagination);
+      if (newDetail) {
+        setMedia(newDetail);
+      }
     } catch {
       // Keep existing on failure
-    } finally {
-      setLoadingEpisodes(false);
-    }
-  };
-
-  // Fetch paginated episodes (e.g. Page 2 for shows with >100 episodes)
-  const handlePageChange = async (newPage: number) => {
-    if (newPage === episodePage || newPage < 1) return;
-    setLoadingEpisodes(true);
-    setEpisodePage(newPage);
-    try {
-      const epData = await fetchEpisodes(selectedSeasonId, newPage, {
-        total: media?.total ?? 0,
-        status: media?.status,
-      });
-      setEpisodes(epData.episodes);
-      setPagination(epData.pagination);
-    } catch {
-      // Keep existing
-    } finally {
-      setLoadingEpisodes(false);
     }
   };
 
@@ -395,34 +399,30 @@ export default function AnimeDetailPage() {
       if (!active) return;
       setLoading(true);
       setMedia(null);
-      setEpisodes([]);
       setCharacters([]);
       setFranchiseGraph(null);
+      setRelatedList([]);
     });
 
     const load = async () => {
       try {
         const detail = await fetchDetail("anime", animeId);
-        const [epData, cast, graph] = await Promise.all([
-          fetchEpisodes(animeId, 1, {
-            total: detail?.total ?? 0,
-            status: detail?.status,
-          }),
+        const [cast, graph, related] = await Promise.all([
           fetchCharacters(animeId, "anime").catch(() => []),
           fetchFranchiseGraph(animeId, "anime").catch(() => null),
+          fetchRelated("anime", animeId).catch(() => []),
         ]);
         if (!active) return;
         setMedia(detail);
-        setEpisodes(epData.episodes);
-        setPagination(epData.pagination);
         setCharacters(cast);
         setFranchiseGraph(graph);
+        setRelatedList(related);
       } catch {
         if (!active) return;
         setMedia(null);
-        setEpisodes([]);
         setCharacters([]);
         setFranchiseGraph(null);
+        setRelatedList([]);
       } finally {
         if (active) setLoading(false);
       }
@@ -439,34 +439,59 @@ export default function AnimeDetailPage() {
   const franchiseStats = useMemo(() => {
     if (!franchiseGraph) return null;
 
-    let totalEps = 0;
-    let watchedEps = 0;
     const seasonEntries = franchiseGraph.seasons;
+    const totalSeasons = seasonEntries.length;
+    let completedSeasons = 0;
 
     seasonEntries.forEach((s) => {
       const storedEntry = entries.find((e) => e.id === s.malId && e.type === "anime");
       const franchiseSeason = franchise?.anime?.seasons?.[s.malId];
-      const count = franchiseSeason?.episodesWatched ?? storedEntry?.progress ?? 0;
-      watchedEps += count;
-      totalEps += s.episodes ?? 0;
+      if (franchiseSeason?.status === "COMPLETED" || storedEntry?.status === "completed") {
+        completedSeasons += 1;
+      }
     });
 
-    const percent = totalEps > 0 ? Math.min(100, Math.round((watchedEps / totalEps) * 100)) : 0;
+    const percent =
+      totalSeasons > 0 ? Math.min(100, Math.round((completedSeasons / totalSeasons) * 100)) : 0;
 
-    return { totalEps, watchedEps, seasonCount: seasonEntries.length, percent };
+    return { totalSeasons, completedSeasons, percent };
   }, [franchiseGraph, franchise, entries]);
 
-  // Active Season Progress
-  const activeSeasonStats = useMemo(() => {
-    const total = media?.total ?? (episodes.length > 0 ? episodes.length : 0);
-    const watched = completedEpisodes.length;
-    const percent = total > 0 ? Math.min(100, Math.round((watched / total) * 100)) : 0;
-    return { watched, total, percent };
-  }, [media, episodes, completedEpisodes]);
-
   const linkedManga = franchiseGraph?.adaptations?.[0] ?? null;
-  const allSeasons = franchiseGraph?.seasons ?? [];
-  const allExtras = franchiseGraph?.extras ?? [];
+  const allSeasons = useMemo(() => franchiseGraph?.seasons ?? [], [franchiseGraph]);
+  const allExtras = useMemo(() => franchiseGraph?.extras ?? [], [franchiseGraph]);
+
+  const { relatedAnime, relatedManga } = useMemo(() => {
+    const existingAnimeIds = new Set([
+      animeId,
+      selectedSeasonId,
+      ...allSeasons.map((s) => s.malId),
+      ...allExtras.map((e) => e.malId),
+    ]);
+    const existingMangaIds = new Set(linkedManga ? [linkedManga.malId] : []);
+
+    const animes: Array<{ mal_id: number; name: string; relation: string }> = [];
+    const mangas: Array<{ mal_id: number; name: string; relation: string }> = [];
+
+    for (const group of relatedList) {
+      const rel = group.relation || "Related";
+      for (const item of group.entry || []) {
+        if (item.type === "anime") {
+          if (!existingAnimeIds.has(item.mal_id)) {
+            existingAnimeIds.add(item.mal_id);
+            animes.push({ mal_id: item.mal_id, name: item.name || "Untitled", relation: rel });
+          }
+        } else if (item.type === "manga") {
+          if (!existingMangaIds.has(item.mal_id)) {
+            existingMangaIds.add(item.mal_id);
+            mangas.push({ mal_id: item.mal_id, name: item.name || "Untitled", relation: rel });
+          }
+        }
+      }
+    }
+
+    return { relatedAnime: animes, relatedManga: mangas };
+  }, [relatedList, animeId, selectedSeasonId, allSeasons, allExtras, linkedManga]);
 
   if (!Number.isFinite(animeId)) {
     return (
@@ -508,26 +533,26 @@ export default function AnimeDetailPage() {
         ) : null}
       </div>
 
-      {/* Franchise Banner & Dual Progress */}
+      {/* Franchise Banner & Season Progress */}
       {franchiseGraph && (
         <div className="franchise-strip-banner">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div className="franchise-strip-badge">UNIFIED FRANCHISE COMMAND CENTER</div>
-            {franchiseStats && franchiseStats.seasonCount > 1 ? (
+            {franchiseStats && franchiseStats.totalSeasons > 1 ? (
               <span className="franchise-strip-meta accent-text">
-                {franchiseStats.watchedEps} / {franchiseStats.totalEps || "?"} Episodes ({franchiseStats.percent}%)
+                {franchiseStats.completedSeasons} / {franchiseStats.totalSeasons} Seasons Completed ({franchiseStats.percent}%)
               </span>
             ) : null}
           </div>
           <div className="franchise-strip-title">{franchiseGraph.title}</div>
 
-          {/* Dual Progress Bars */}
+          {/* Season Progress Bar */}
           <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-            {franchiseStats && franchiseStats.seasonCount > 1 && (
+            {franchiseStats && franchiseStats.totalSeasons > 1 && (
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-2)", marginBottom: 4 }}>
-                  <span>FRANCHISE TOTAL PROGRESS ({franchiseStats.seasonCount} Seasons)</span>
-                  <span>{franchiseStats.watchedEps} / {franchiseStats.totalEps || "?"} Eps ({franchiseStats.percent}%)</span>
+                  <span>FRANCHISE SEASONS PROGRESS ({franchiseStats.totalSeasons} Seasons)</span>
+                  <span>{franchiseStats.completedSeasons} / {franchiseStats.totalSeasons} Seasons ({franchiseStats.percent}%)</span>
                 </div>
                 <div style={{ height: 6, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
                   <div
@@ -541,23 +566,6 @@ export default function AnimeDetailPage() {
                 </div>
               </div>
             )}
-
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-2)", marginBottom: 4 }}>
-                <span>ACTIVE SEASON PROGRESS: {media?.title || "Season"}</span>
-                <span>{activeSeasonStats.watched} / {activeSeasonStats.total || "?"} Eps ({activeSeasonStats.percent}%)</span>
-              </div>
-              <div style={{ height: 6, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
-                <div
-                  style={{
-                    height: "100%",
-                    width: `${activeSeasonStats.percent}%`,
-                    background: "var(--accent)",
-                    transition: "width 0.3s ease",
-                  }}
-                />
-              </div>
-            </div>
           </div>
         </div>
       )}
@@ -578,8 +586,6 @@ export default function AnimeDetailPage() {
                   <span>{media.year || "--"}</span>
                   <span>•</span>
                   <span>{media.format}</span>
-                  <span>•</span>
-                  <span>{media.total ? `${media.total} eps` : "Ongoing"}</span>
                   {media.studios && media.studios.length > 0 ? (
                     <>
                       <span>•</span>
@@ -625,7 +631,7 @@ export default function AnimeDetailPage() {
       </div>
 
       <div className="detail-lower-grid">
-        {/* Left Column: Multi-Season Selector & Episode Tracking */}
+        {/* Left Column: Canon Seasons Tracker (No episodes, pure seasons!) */}
         <div className="detail-card detail-episodes-card">
           <div className="detail-section">
             <div
@@ -633,293 +639,244 @@ export default function AnimeDetailPage() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                marginBottom: 12,
+                marginBottom: 14,
                 flexWrap: "wrap",
                 gap: 8,
               }}
             >
-              <div className="detail-section-title" style={{ margin: 0 }}>
-                Episode Tracker ({completedEpisodes.length} / {media?.total ? `${media.total}` : "Ongoing"})
+              <div>
+                <div className="detail-section-title" style={{ margin: 0 }}>
+                  Canon Seasons & Franchise Releases
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>
+                  {allSeasons.length > 1
+                    ? `${allSeasons.length} canon seasons in franchise • Track season-by-season`
+                    : "Single season release • Track season completion"}
+                </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button
-                  type="button"
-                  className="btn-text-link"
-                  style={{
-                    fontSize: 11,
-                    padding: "3px 8px",
-                    borderRadius: 4,
-                    border: "1px solid var(--border)",
-                    background: "var(--surface-2)",
-                    color: "var(--text-2)",
-                    cursor: "pointer",
-                  }}
-                  onClick={() => setNumberingMode((prev) => (prev === "relative" ? "absolute" : "relative"))}
-                  title="Toggle between Season-Relative (S2 Ep 1) and Absolute (Ep 26) numbering"
-                >
-                  {numberingMode === "relative" ? "Mode: S-Relative" : "Mode: Absolute"}
-                </button>
-                {entry && episodes.length > 0 ? (
+                {allSeasons.length > 1 && (
                   <button
-                    className="btn-text-link"
                     type="button"
-                    onClick={handleMarkSeasonComplete}
-                    title="Mark all episodes in this season as watched"
+                    className="btn-text-link"
+                    style={{
+                      fontSize: 11,
+                      padding: "4px 10px",
+                      borderRadius: 4,
+                      border: "1px solid var(--teal)",
+                      background: "rgba(43, 217, 199, 0.1)",
+                      color: "var(--teal)",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                    }}
+                    onClick={handleMarkAllSeasonsComplete}
+                    title="Mark all franchise seasons as completed"
                   >
-                    ✓ Mark Season Completed
+                    ✓ Mark All Seasons Completed
                   </button>
-                ) : null}
+                )}
               </div>
             </div>
 
-            {/* Season Selector Accordion / Tabs */}
-            {allSeasons.length > 1 ? (
-              <div className="season-selector-bar">
-                <span className="season-selector-label">CANON SEASONS:</span>
-                <div className="season-pills-row">
-                  {allSeasons.map((season) => {
-                    const isSelected = season.malId === selectedSeasonId;
-                    const franchiseSeason = franchise?.anime?.seasons?.[season.malId];
-                    const isDone =
-                      franchiseSeason?.status === "COMPLETED" ||
-                      entries.find((e) => e.id === season.malId)?.status === "completed";
-                    return (
-                      <button
-                        key={season.malId}
-                        type="button"
-                        className={`season-pill ${isSelected ? "active" : ""} ${isDone ? "completed" : ""}`}
-                        onClick={() => handleSelectSeason(season.malId)}
+            {/* Canon Seasons Cards List */}
+            <div className="season-cards-list">
+              {(allSeasons.length > 0
+                ? allSeasons
+                : [
+                    {
+                      malId: media?.id ?? animeId,
+                      title: media?.title ?? "Season 1",
+                      titleEnglish: media?.title_english ?? null,
+                      cover: media?.cover ?? "",
+                      seasonNumber: 1,
+                      type: media?.format || "TV",
+                      year: media?.year,
+                      episodes: media?.total ?? null,
+                    },
+                  ]
+              ).map((season) => {
+                const isCurrent = season.malId === selectedSeasonId;
+                const franchiseSeason = franchise?.anime?.seasons?.[season.malId];
+                const storedEntry = entries.find((e) => e.id === season.malId && e.type === "anime");
+                const status: WatchStatus =
+                  franchiseSeason?.status ??
+                  (storedEntry?.status === "completed"
+                    ? "COMPLETED"
+                    : storedEntry?.status === "watching"
+                      ? "WATCHING"
+                      : storedEntry?.status === "on_hold"
+                        ? "ON_HOLD"
+                        : storedEntry?.status === "dropped"
+                          ? "DROPPED"
+                          : "PLAN_TO_WATCH");
+
+                const isCompleted = status === "COMPLETED";
+                const isWatching = status === "WATCHING";
+                const isPlan = status === "PLAN_TO_WATCH";
+
+                return (
+                  <div
+                    key={season.malId}
+                    className={`season-card ${isCurrent ? "active" : ""} ${isCompleted ? "completed" : ""}`}
+                    onClick={() => handleSelectSeason(season.malId)}
+                  >
+                    <img
+                      src={season.cover || media?.cover}
+                      alt={season.title}
+                      className="season-card-thumb"
+                    />
+                    <div className="season-card-body">
+                      <div className="season-card-header">
+                        <span className="season-card-format">
+                          S{season.seasonNumber} • {season.type || "TV"}
+                        </span>
+                        <span className={`season-status-tag ${status.toLowerCase()}`}>
+                          {status === "COMPLETED"
+                            ? "Completed"
+                            : status === "WATCHING"
+                              ? "Watching"
+                              : "Plan to Watch"}
+                        </span>
+                        {isCurrent && (
+                          <span
+                            style={{
+                              fontFamily: "var(--font-mono, monospace)",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: "var(--accent)",
+                              background: "rgba(232, 25, 75, 0.12)",
+                              padding: "2px 6px",
+                              borderRadius: 3,
+                            }}
+                          >
+                            CURRENT VIEW
+                          </span>
+                        )}
+                      </div>
+                      <div className="season-card-title" title={season.title}>
+                        {season.title}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                        {season.year || "--"} • {season.episodes ? `${season.episodes} eps` : "Ongoing Broadcast"}
+                      </div>
+                      <div
+                        className="season-card-actions"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <span>S{season.seasonNumber}</span>
-                        {isDone ? <span className="season-done-mark">✓</span> : null}
-                      </button>
-                    );
-                  })}
-                  {allExtras.length > 0 ? (
-                    <div className="season-extras-dropdown">
-                      {allExtras.map((extra) => (
                         <button
-                          key={extra.malId}
                           type="button"
-                          className={`season-pill extra ${extra.malId === selectedSeasonId ? "active" : ""}`}
+                          className={`season-action-btn ${isCompleted ? "active-done" : ""}`}
+                          onClick={() => handleToggleSeasonStatus(season.malId, "COMPLETED")}
+                          title="Mark this season completed"
+                        >
+                          ✓ Complete
+                        </button>
+                        <button
+                          type="button"
+                          className={`season-action-btn ${isWatching ? "active-watching" : ""}`}
+                          onClick={() => handleToggleSeasonStatus(season.malId, "WATCHING")}
+                          title="Mark this season currently watching"
+                        >
+                          ▶ Watching
+                        </button>
+                        <button
+                          type="button"
+                          className={`season-action-btn ${isPlan ? "active-plan" : ""}`}
+                          onClick={() => handleToggleSeasonStatus(season.malId, "PLAN_TO_WATCH")}
+                          title="Set to plan to watch"
+                        >
+                          + Plan
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Movies, OVAs & Extras */}
+              {allExtras.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div
+                    style={{
+                      fontFamily: "var(--font-mono, monospace)",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: "var(--text-3)",
+                      marginBottom: 8,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Movies, OVAs & Specials ({allExtras.length})
+                  </div>
+                  <div className="season-cards-list">
+                    {allExtras.map((extra) => {
+                      const isCurrent = extra.malId === selectedSeasonId;
+                      const franchiseSeason = franchise?.anime?.seasons?.[extra.malId];
+                      const storedEntry = entries.find((e) => e.id === extra.malId && e.type === "anime");
+                      const status: WatchStatus =
+                        franchiseSeason?.status ??
+                        (storedEntry?.status === "completed"
+                          ? "COMPLETED"
+                          : storedEntry?.status === "watching"
+                            ? "WATCHING"
+                            : "PLAN_TO_WATCH");
+                      const isCompleted = status === "COMPLETED";
+
+                      return (
+                        <div
+                          key={extra.malId}
+                          className={`season-card ${isCurrent ? "active" : ""} ${isCompleted ? "completed" : ""}`}
                           onClick={() => handleSelectSeason(extra.malId)}
                         >
-                          {extra.type}: {extra.title.slice(0, 16)}…
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-
-            {/* Quick Manual Episode Tracker (Allows stepping/entering any episode even for infinite/ongoing anime) */}
-            <div className="anime-manual-tracker-bar">
-              <div className="manual-tracker-info">
-                <span className="manual-tracker-label">QUICK EPISODE TRACKER</span>
-                <span className="manual-tracker-count">
-                  Episode <strong>{completedEpisodes.length}</strong> / {media?.total ? `${media.total}` : "∞ Ongoing"}
-                </span>
-              </div>
-              <div className="manual-tracker-controls">
-                <button
-                  type="button"
-                  className="stepper-btn"
-                  disabled={completedEpisodes.length <= 0 || !entry}
-                  onClick={() => {
-                    if (completedEpisodes.length > 0) {
-                      const maxEp = Math.max(...completedEpisodes);
-                      toggleEpisode(maxEp);
-                    }
-                  }}
-                  title="Unwatch latest episode"
-                >
-                  -1
-                </button>
-                <input
-                  type="number"
-                  className="manual-tracker-input"
-                  min={0}
-                  max={media?.total ?? 99999}
-                  value={completedEpisodes.length}
-                  disabled={!entry}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val) && val >= 0) {
-                      handleWatchUpTo(val);
-                    }
-                  }}
-                  title="Directly enter episode number"
-                />
-                <button
-                  type="button"
-                  className="stepper-btn primary"
-                  disabled={!entry || (media?.total ? completedEpisodes.length >= media.total : false)}
-                  onClick={() => {
-                    const nextEp = completedEpisodes.length + 1;
-                    handleWatchUpTo(nextEp);
-                  }}
-                  title="Watch next episode"
-                >
-                  +1 Ep
-                </button>
-                <button
-                  type="button"
-                  className="stepper-btn secondary"
-                  disabled={!entry || (media?.total ? completedEpisodes.length >= media.total : false)}
-                  onClick={() => {
-                    const nextEp = completedEpisodes.length + 5;
-                    handleWatchUpTo(media?.total ? Math.min(nextEp, media.total) : nextEp);
-                  }}
-                  title="+5 episodes"
-                >
-                  +5
-                </button>
-                <button
-                  type="button"
-                  className="stepper-btn secondary"
-                  disabled={!entry || (media?.total ? completedEpisodes.length >= media.total : false)}
-                  onClick={() => {
-                    const nextEp = completedEpisodes.length + 10;
-                    handleWatchUpTo(media?.total ? Math.min(nextEp, media.total) : nextEp);
-                  }}
-                  title="+10 episodes"
-                >
-                  +10
-                </button>
-              </div>
-            </div>
-
-            {/* Episodes List */}
-            {loadingEpisodes ? (
-              <div className="detail-empty">Loading episodes…</div>
-            ) : episodes.length === 0 ? (
-              <div className="detail-empty" style={{ textAlign: "center", padding: "20px 16px" }}>
-                <div style={{ color: "var(--text-1)", fontWeight: 600, marginBottom: 4 }}>
-                  {media?.total ? "Episode Guide Indexing" : "Ongoing Broadcast • No Episode Limit"}
-                </div>
-                <div style={{ fontSize: 12, color: "var(--text-3)", maxWidth: 360, margin: "0 auto" }}>
-                  Detailed episode titles are updating from broadcast. Use the quick tracker above to log your progress directly.
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="episode-list custom-scroll">
-                  {episodes.map((episode) => {
-                    const value = episode.mal_id;
-                    const active = completedEpisodes.includes(value);
-                    const currentSeason = allSeasons.find((s) => s.malId === selectedSeasonId);
-                    const parsedEp = parseMediaNumber(episode.title || episode.mal_id, "anime");
-                    const epLabel = formatMediaNumberDisplay({
-                      mediaType: "anime",
-                      seasonNumber: currentSeason?.seasonNumber,
-                      number: parsedEp.number,
-                      mode: numberingMode,
-                    });
-                    return (
-                      <div
-                        key={episode.mal_id}
-                        className={`episode-row ${active ? "active" : ""}`}
-                        style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
-                      >
-                        <button
-                          type="button"
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 12,
-                            flex: 1,
-                            textAlign: "left",
-                            cursor: entry ? "pointer" : "default",
-                          }}
-                          onClick={() => entry && toggleEpisode(value)}
-                          disabled={!entry}
-                        >
-                          <span className="episode-id">{epLabel}</span>
-                          <span className="episode-title">
-                            {episode.title ||
-                              episode.title_english ||
-                              episode.title_japanese ||
-                              `Episode ${value}`}
-                          </span>
-                          {episode.filler && (
-                            <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, background: "rgba(232, 25, 75, 0.2)", color: "var(--accent)", border: "1px solid var(--accent)", fontWeight: 700 }}>
-                              FILLER
-                            </span>
-                          )}
-                          {episode.recap && (
-                            <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, background: "rgba(61, 184, 156, 0.2)", color: "var(--teal)", border: "1px solid var(--teal)", fontWeight: 700 }}>
-                              RECAP
-                            </span>
-                          )}
-                          <span className="episode-meta">{episode.aired ? new Date(episode.aired).toLocaleDateString() : ""}</span>
-                        </button>
-
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          {entry && !active && (
-                            <button
-                              type="button"
-                              className="btn-text-link"
-                              style={{ fontSize: 10, opacity: 0.8 }}
-                              onClick={() => handleWatchUpTo(value)}
-                              title={`Watch up to Ep ${value}`}
+                          <img
+                            src={extra.cover || media?.cover}
+                            alt={extra.title}
+                            className="season-card-thumb"
+                          />
+                          <div className="season-card-body">
+                            <div className="season-card-header">
+                              <span className="season-card-format">{extra.type}</span>
+                              <span className={`season-status-tag ${status.toLowerCase()}`}>
+                                {status === "COMPLETED" ? "Completed" : status === "WATCHING" ? "Watching" : "Plan"}
+                              </span>
+                            </div>
+                            <div className="season-card-title" title={extra.title}>
+                              {extra.title}
+                            </div>
+                            <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                              {extra.year || "--"} • {extra.episodes ? `${extra.episodes} eps` : "Special"}
+                            </div>
+                            <div
+                              className="season-card-actions"
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              Watch up to here
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className="episode-toggle"
-                            onClick={() => entry && toggleEpisode(value)}
-                            disabled={!entry}
-                            title={active ? "Mark uncompleted" : "Mark completed"}
-                          >
-                            {active ? "✓" : "○"}
-                          </button>
+                              <button
+                                type="button"
+                                className={`season-action-btn ${isCompleted ? "active-done" : ""}`}
+                                onClick={() => handleToggleSeasonStatus(extra.malId, "COMPLETED")}
+                              >
+                                ✓ Complete
+                              </button>
+                              <button
+                                type="button"
+                                className="season-action-btn"
+                                onClick={() => handleToggleSeasonStatus(extra.malId, "PLAN_TO_WATCH")}
+                              >
+                                + Plan
+                              </button>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Pagination Controls for >100 episodes */}
-                {pagination.last_visible_page > 1 && (
-                  <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      className="pill"
-                      disabled={episodePage <= 1}
-                      onClick={() => handlePageChange(episodePage - 1)}
-                    >
-                      ← Prev
-                    </button>
-                    {Array.from({ length: pagination.last_visible_page }, (_, i) => i + 1).map((p) => (
-                      <button
-                        key={p}
-                        type="button"
-                        className={`pill ${p === episodePage ? "active" : ""}`}
-                        onClick={() => handlePageChange(p)}
-                      >
-                        {p}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      className="pill"
-                      disabled={!pagination.has_next_page}
-                      onClick={() => handlePageChange(episodePage + 1)}
-                    >
-                      Next →
-                    </button>
+                      );
+                    })}
                   </div>
-                )}
-              </>
-            )}
-            {!entry ? <div className="detail-empty">Add this anime to track episodes.</div> : null}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Right Column: Overview, Cast & Franchise Media */}
+        {/* Right Column: Overview, Cast & Franchise Hub */}
         <div className="detail-card detail-info-card">
           <div className="detail-tabs">
             <button
@@ -936,13 +893,13 @@ export default function AnimeDetailPage() {
             >
               Characters
             </button>
-            {franchiseGraph && (allSeasons.length > 1 || linkedManga) ? (
+            {franchiseGraph || relatedList.length > 0 ? (
               <button
                 className={`detail-tab ${activeInfoTab === "seasons" ? "active" : ""}`}
                 type="button"
                 onClick={() => setActiveInfoTab("seasons")}
               >
-                Franchise Hub
+                Franchise &amp; Related
               </button>
             ) : null}
           </div>
@@ -958,9 +915,9 @@ export default function AnimeDetailPage() {
                       <span className="info-value">{media.format}</span>
                     </div>
                     <div className="info-item">
-                      <span className="info-label">Episodes</span>
+                      <span className="info-label">Status</span>
                       <span className="info-value">
-                        {media.total ? String(media.total) : "Ongoing"}
+                        {media.status ? media.status.replace(/_/g, " ") : "Ongoing"}
                       </span>
                     </div>
                     <div className="info-item">
@@ -976,7 +933,7 @@ export default function AnimeDetailPage() {
                   <div className="detail-empty">Overview unavailable.</div>
                 )}
                 <div className="detail-section">
-                  <div className="detail-section-title">Season Status</div>
+                  <div className="detail-section-title">Active Season Status</div>
                   <div className="status-button-row" role="group" aria-label="Season status">
                     {STATUS_OPTIONS.map((option) => {
                       const active = seasonStatus === option.value;
@@ -1047,72 +1004,63 @@ export default function AnimeDetailPage() {
               </div>
             ) : (
               <div className="detail-section">
-                <div className="detail-section-title">All Franchise Entries</div>
+                <div className="detail-section-title">Franchise Universe &amp; Related Series</div>
 
-                {/* Mainline Seasons List */}
-                <div style={{ marginBottom: 20 }}>
-                  <div className="franchise-group-title">Mainline Chronological Seasons</div>
-                  <div className="franchise-nodes-list">
-                    {allSeasons.map((season) => {
-                      const isCurrent = season.malId === selectedSeasonId;
-                      const franchiseSeason = franchise?.anime?.seasons?.[season.malId];
-                      const stored = entries.find((e) => e.id === season.malId);
-                      const epsDone = franchiseSeason?.episodesWatched ?? stored?.progress ?? 0;
-                      return (
-                        <div
-                          className={`franchise-node-item ${isCurrent ? "current" : ""}`}
-                          key={season.malId}
-                        >
-                          <img className="franchise-node-thumb" src={season.cover} alt={season.title} />
-                          <div style={{ flex: 1 }}>
-                            <div className="franchise-node-title">
-                              S{season.seasonNumber}: {season.title}
-                            </div>
-                            <div className="franchise-node-sub">
-                              {season.year || "--"} • {season.episodes ? `${season.episodes} eps` : "Ongoing"}
-                              {epsDone > 0 ? ` • Watched ${epsDone}/${season.episodes ?? "?"}` : ""}
-                            </div>
-                          </div>
-                          {isCurrent ? (
-                            <span className="franchise-node-active-pill">CURRENT</span>
-                          ) : (
-                            <button
-                              className="franchise-node-action"
-                              type="button"
-                              onClick={() => handleSelectSeason(season.malId)}
-                            >
-                              Track →
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                {/* ── Section 1: ANIME RELEASES & RELATED ── */}
+                <div className="franchise-section-divider">
+                  <span className="franchise-section-badge anime">Anime Releases</span>
+                  <span className="franchise-section-count">
+                    {allSeasons.length + allExtras.length + relatedAnime.length} Titles
+                  </span>
                 </div>
 
-                {/* Linked Manga Adaptation */}
-                {linkedManga ? (
-                  <div style={{ marginBottom: 20 }}>
-                    <div className="franchise-group-title">Source / Linked Manga</div>
-                    <div className="franchise-node-item">
-                      <img className="franchise-node-thumb" src={linkedManga.cover} alt={linkedManga.title} />
-                      <div style={{ flex: 1 }}>
-                        <div className="franchise-node-title">{linkedManga.title}</div>
-                        <div className="franchise-node-sub">
-                          {linkedManga.type} • {linkedManga.year || "--"}
-                        </div>
-                      </div>
-                      <Link className="franchise-node-action manga" href={`/manga/${linkedManga.malId}`}>
-                        Open Manga Tracker →
-                      </Link>
+                {/* Mainline Seasons List */}
+                {allSeasons.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div className="franchise-group-title">Mainline Chronological Seasons</div>
+                    <div className="franchise-nodes-list">
+                      {allSeasons.map((season) => {
+                        const isCurrent = season.malId === selectedSeasonId;
+                        const franchiseSeason = franchise?.anime?.seasons?.[season.malId];
+                        const stored = entries.find((e) => e.id === season.malId);
+                        const isDone = franchiseSeason?.status === "COMPLETED" || stored?.status === "completed";
+                        return (
+                          <div
+                            className={`franchise-node-item ${isCurrent ? "current" : ""}`}
+                            key={season.malId}
+                          >
+                            <img className="franchise-node-thumb" src={season.cover} alt={season.title} />
+                            <div style={{ flex: 1 }}>
+                              <div className="franchise-node-title">
+                                S{season.seasonNumber}: {season.title}
+                              </div>
+                              <div className="franchise-node-sub">
+                                {season.year || "--"} • {season.episodes ? `${season.episodes} eps` : "Ongoing"}
+                                {isDone ? " • Completed" : ""}
+                              </div>
+                            </div>
+                            {isCurrent ? (
+                              <span className="franchise-node-active-pill">CURRENT</span>
+                            ) : (
+                              <button
+                                className="franchise-node-action"
+                                type="button"
+                                onClick={() => handleSelectSeason(season.malId)}
+                              >
+                                View →
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                ) : null}
+                )}
 
                 {/* Movies & Extras */}
-                {allExtras.length > 0 ? (
-                  <div>
-                    <div className="franchise-group-title">Movies, OVAs & Specials</div>
+                {allExtras.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div className="franchise-group-title">Theatrical Films &amp; Specials</div>
                     <div className="franchise-nodes-list">
                       {allExtras.map((extra) => (
                         <div className="franchise-node-item" key={extra.malId}>
@@ -1128,12 +1076,98 @@ export default function AnimeDetailPage() {
                             type="button"
                             onClick={() => handleSelectSeason(extra.malId)}
                           >
-                            Track →
+                            View →
                           </button>
                         </div>
                       ))}
                     </div>
                   </div>
+                )}
+
+                {/* Related Anime Series (Prequels, Sequels, Spin-offs, Side stories) */}
+                {relatedAnime.length > 0 && (
+                  <div style={{ marginBottom: 20 }}>
+                    <div className="franchise-group-title">Related Anime Series &amp; Spin-Offs</div>
+                    <div className="franchise-nodes-list">
+                      {relatedAnime.map((item) => (
+                        <div className="franchise-node-item" key={`${item.relation}-${item.mal_id}`}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                              <span className={`relation-chip ${item.relation.toLowerCase().replace(/\s+/g, "-")}`}>
+                                {item.relation}
+                              </span>
+                              <span className="franchise-node-title">{item.name}</span>
+                            </div>
+                          </div>
+                          <Link
+                            className="franchise-node-action"
+                            href={`/anime/${item.mal_id}`}
+                            title={`View ${item.name}`}
+                          >
+                            View Anime →
+                          </Link>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section 2: MANGA & PRINT PUBLICATIONS ── */}
+                <div className="franchise-section-divider" style={{ marginTop: 24 }}>
+                  <span className="franchise-section-badge manga">Manga &amp; Print Publications</span>
+                  <span className="franchise-section-count">
+                    {(linkedManga ? 1 : 0) + relatedManga.length} Titles
+                  </span>
+                </div>
+
+                {/* Linked Manga Adaptation */}
+                {linkedManga && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div className="franchise-group-title">Source / Original Manga</div>
+                    <div className="franchise-node-item">
+                      <img className="franchise-node-thumb" src={linkedManga.cover} alt={linkedManga.title} />
+                      <div style={{ flex: 1 }}>
+                        <div className="franchise-node-title">{linkedManga.title}</div>
+                        <div className="franchise-node-sub">
+                          {linkedManga.type} • {linkedManga.year || "--"}
+                          {linkedManga.chapters ? ` • ${linkedManga.chapters} chapters` : ""}
+                        </div>
+                      </div>
+                      <Link className="franchise-node-action manga" href={`/manga/${linkedManga.malId}`}>
+                        Open Manga Tracker →
+                      </Link>
+                    </div>
+                  </div>
+                )}
+
+                {/* Related Manga & Light Novels */}
+                {relatedManga.length > 0 ? (
+                  <div>
+                    <div className="franchise-group-title">Related Manga &amp; Light Novels</div>
+                    <div className="franchise-nodes-list">
+                      {relatedManga.map((item) => (
+                        <div className="franchise-node-item" key={`${item.relation}-${item.mal_id}`}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                              <span className={`relation-chip ${item.relation.toLowerCase().replace(/\s+/g, "-")}`}>
+                                {item.relation}
+                              </span>
+                              <span className="franchise-node-title">{item.name}</span>
+                            </div>
+                          </div>
+                          <Link
+                            className="franchise-node-action manga"
+                            href={`/manga/${item.mal_id}`}
+                            title={`Open ${item.name}`}
+                          >
+                            Open Manga Tracker →
+                          </Link>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : !linkedManga ? (
+                  <div className="detail-empty">No print adaptations recorded.</div>
                 ) : null}
               </div>
             )}
