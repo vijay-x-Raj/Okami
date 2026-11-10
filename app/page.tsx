@@ -1524,32 +1524,6 @@ const STATUS_FILTERS = [
 
 const SEASONS = ["Winter", "Spring", "Summer", "Fall"] as const;
 
-const QUICK_TAGS_ANIME = [
-  "Frieren",
-  "Attack on Titan",
-  "Solo Leveling",
-  "Jujutsu Kaisen",
-  "Demon Slayer",
-  "Chainsaw Man",
-  "Cyberpunk",
-  "Action",
-  "Sci-Fi",
-  "Romance",
-];
-
-const QUICK_TAGS_MANGA = [
-  "Berserk",
-  "One Piece",
-  "Vagabond",
-  "Vinland Saga",
-  "Solo Leveling",
-  "Chainsaw Man",
-  "Tokyo Ghoul",
-  "Action",
-  "Dark Fantasy",
-  "Seinen",
-];
-
 // ── Unified Explore Card Component ──
 function ExploreMediaCard({
   media,
@@ -1752,6 +1726,23 @@ function ExploreCategorySection({
       <div className="explore-category-header">
         <div className="explore-category-title-wrap">
           <h3 className="section-title" style={{ margin: 0 }}>{title}</h3>
+          {title.toLowerCase().includes("trending") && (
+            <span
+              style={{
+                fontFamily: "var(--font-mono, monospace)",
+                fontSize: "9px",
+                letterSpacing: "1.5px",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                padding: "2px 7px",
+                borderRadius: "2px",
+                background: "var(--accent)",
+                color: "#fff",
+              }}
+            >
+              VIRAL NOW
+            </span>
+          )}
           <span className="explore-category-count">({items.length} titles)</span>
         </div>
 
@@ -1825,7 +1816,7 @@ interface ExploreCategoryConfig {
   subtitle: string;
   kanji: string;
   type: MediaType;
-  categoryType: "season" | "top" | "top-filter" | "genre";
+  categoryType: "season" | "top" | "top-filter" | "genre" | "trending";
   genre?: string;
   filter?: string;
   initialItems?: OkamiMedia[];
@@ -1866,7 +1857,16 @@ function DedicatedCategoryView({
         let fetched: OkamiMedia[] = [];
         let hasNext = false;
 
-        if (category.categoryType === "season") {
+        if (category.categoryType === "trending") {
+          const res = await searchMedia(category.type, "", {
+            sort: "trending",
+            format: activeFormat || undefined,
+            page: targetPage,
+            limit: 25,
+          });
+          fetched = res.data || [];
+          hasNext = Boolean(res.pagination?.has_next_page);
+        } else if (category.categoryType === "season") {
           const res = await fetchSeasonDetailed({ page: targetPage, limit: 25 });
           fetched = res.data;
           hasNext = Boolean(res.pagination?.has_next_page);
@@ -2511,6 +2511,10 @@ function ExploreView({
   const [loadingSearch, setLoadingSearch] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  // Trending lists (real-time viral & trending releases via sort: "trending")
+  const [trendingAnime, setTrendingAnime] = useState<OkamiMedia[]>([]);
+  const [trendingManga, setTrendingManga] = useState<OkamiMedia[]>([]);
+
   // Categorized Anime lists (up to 50 items each for multi-page carousel)
   const [seasonal, setSeasonal] = useState<OkamiMedia[]>([]);
   const [topAnime, setTopAnime] = useState<OkamiMedia[]>([]);
@@ -2545,20 +2549,22 @@ function ExploreView({
 
     Promise.resolve().then(() => {
       if (!active) return;
-      if (seasonal.length === 0 && topAnime.length === 0 && topManga.length === 0) {
+      if (trendingAnime.length === 0 && seasonal.length === 0 && topAnime.length === 0 && topManga.length === 0) {
         setLoadingTop(true);
       }
       setTopError(false);
     });
 
-    // Fast-path: Load top seasonal & top anime first to display content instantly (~200ms)
+    // Fast-path: Load trending & top seasonal/anime first to display content instantly (~200ms)
     Promise.all([
+      searchMedia("anime", "", { sort: "trending", limit: 50 }).then((r) => r.data).catch(() => []),
       fetchSeason({ limit: 50 }).catch(() => []),
       fetchTop("anime", { limit: 50 }).catch(() => []),
-    ]).then(([seasonData, animeData]) => {
+    ]).then(([trendingData, seasonData, animeData]) => {
       if (!active) return;
-      if (seasonData.length > 0) setSeasonal(seasonData);
-      if (animeData.length > 0) setTopAnime(animeData);
+      if (trendingData && trendingData.length > 0) setTrendingAnime(trendingData);
+      if (seasonData && seasonData.length > 0) setSeasonal(seasonData);
+      if (animeData && animeData.length > 0) setTopAnime(animeData);
       setLoadingTop(false);
     });
 
@@ -2574,14 +2580,16 @@ function ExploreView({
       setPsychAnime(psychData);
     });
 
-    // Stream in manga categories
+    // Stream in manga categories (including trending manga)
     Promise.all([
+      searchMedia("manga", "", { sort: "trending", limit: 50 }).then((r) => r.data).catch(() => []),
       fetchTop("manga", { limit: 50 }).catch(() => []),
       fetchTop("manga", { filter: "novels", limit: 50 }).catch(() => []),
       searchMedia("manga", "", { genres: "Action", limit: 50 }).then((r) => r.data).catch(() => []),
       searchMedia("manga", "", { genres: "Romance", limit: 50 }).then((r) => r.data).catch(() => []),
-    ]).then(([mangaData, novelData, actMangaData, romMangaData]) => {
+    ]).then(([trendMangaData, mangaData, novelData, actMangaData, romMangaData]) => {
       if (!active) return;
+      if (trendMangaData && trendMangaData.length > 0) setTrendingManga(trendMangaData);
       setTopManga(mangaData);
       setTopNovels(novelData);
       setActionManga(actMangaData);
@@ -2591,13 +2599,23 @@ function ExploreView({
     return () => {
       active = false;
     };
-  }, [seasonal.length, topAnime.length, topManga.length]);
+  }, [trendingAnime.length, trendingManga.length, seasonal.length, topAnime.length, topManga.length]);
 
   const loadMoreBatches = async (catId: string) => {
     if (loadingBatchCategory) return;
     setLoadingBatchCategory(catId);
     try {
-      if (catId === "seasonal") {
+      if (catId === "trendingAnime") {
+        const nextPage = Math.floor(trendingAnime.length / 25) + 1;
+        const res = await searchMedia("anime", "", { sort: "trending", page: nextPage, limit: 30 });
+        const newItems = (res.data || []).filter((m) => !trendingAnime.some((s) => s.id === m.id));
+        setTrendingAnime((prev) => [...prev, ...newItems]);
+      } else if (catId === "trendingManga") {
+        const nextPage = Math.floor(trendingManga.length / 25) + 1;
+        const res = await searchMedia("manga", "", { sort: "trending", page: nextPage, limit: 30 });
+        const newItems = (res.data || []).filter((m) => !trendingManga.some((s) => s.id === m.id));
+        setTrendingManga((prev) => [...prev, ...newItems]);
+      } else if (catId === "seasonal") {
         const nextPage = Math.floor(seasonal.length / 25) + 1;
         const res = await fetchSeasonDetailed({ page: nextPage, limit: 30 });
         const newItems = res.data.filter((m) => !seasonal.some((s) => s.id === m.id));
@@ -2755,29 +2773,18 @@ function ExploreView({
     setActiveSort("trending");
   };
 
-  const handleQuickTagClick = (tag: string) => {
-    if ((EXPLORE_GENRES as readonly string[]).includes(tag)) {
-      setActiveGenres((prev) =>
-        prev.includes(tag) ? prev.filter((g) => g !== tag) : [...prev, tag]
-      );
-    } else {
-      setQuery(tag);
-    }
-  };
-
   const isAnime = activeType === "anime";
-  const quickTags = isAnime ? QUICK_TAGS_ANIME : QUICK_TAGS_MANGA;
   const formatOptions = isAnime ? ANIME_FORMATS : MANGA_FORMATS;
 
-  // Curate 5 top spotlight items for the full-width interactive slider
+  // Curate 5 top spotlight items for the full-width interactive slider (powered by live trending releases)
   const spotlights = useMemo(() => {
     if (isAnime) {
-      const list = [...seasonal.slice(0, 3), ...topAnime.slice(0, 2)];
+      const list = [...trendingAnime.slice(0, 3), ...seasonal.slice(0, 2)];
       return list.length ? list : topAnime.slice(0, 5);
     }
-    const list = [...topManga.slice(0, 4), ...topNovels.slice(0, 1)];
+    const list = [...trendingManga.slice(0, 3), ...topManga.slice(0, 2)];
     return list.length ? list : topManga.slice(0, 5);
-  }, [isAnime, seasonal, topAnime, topManga, topNovels]);
+  }, [isAnime, trendingAnime, seasonal, topAnime, trendingManga, topManga]);
 
   const countActiveFilters =
     (debouncedQuery.trim() ? 1 : 0) +
@@ -2866,24 +2873,6 @@ function ExploreView({
             ✕
           </button>
         ) : null}
-      </div>
-
-      {/* ── Trending Quick Chips ── */}
-      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px", marginBottom: "14px" }}>
-        <span className="filter-label" style={{ marginRight: "4px" }}>Trending:</span>
-        {quickTags.map((tag) => {
-          const isActive = query.toLowerCase() === tag.toLowerCase() || activeGenres.includes(tag);
-          return (
-            <button
-              key={tag}
-              type="button"
-              className={`pill ${isActive ? "active" : ""}`}
-              onClick={() => handleQuickTagClick(tag)}
-            >
-              {tag}
-            </button>
-          );
-        })}
       </div>
 
       {/* ── Filter Matrix Bar ── */}
@@ -3087,7 +3076,33 @@ function ExploreView({
             {/* 2. Structured Multi-Row & Multi-Column Categorized Sections */}
             {isAnime ? (
               <>
-                {/* Category 01: Top Airing Releases */}
+                {/* Category 01: Trending Anime Releases */}
+                <ExploreCategorySection
+                  title="Trending This Week"
+                  items={trendingAnime.length > 0 ? trendingAnime : seasonal}
+                  entryMap={entryMap}
+                  onAdd={onAdd}
+                  onDetail={onDetail}
+                  isMultiSelect={isMultiSelect}
+                  selectedCatalogMap={selectedCatalogMap}
+                  onToggleCatalogItem={handleToggleCatalogItem}
+                  onViewAll={() =>
+                    setActiveCategoryView({
+                      id: "anime-trending",
+                      title: "Trending This Week",
+                      subtitle: "The most watched, viral, and talked-about anime series across the globe right now",
+                      kanji: "急上昇",
+                      type: "anime",
+                      categoryType: "trending",
+                      initialItems: trendingAnime,
+                    })
+                  }
+                  onLoadMoreBatches={() => loadMoreBatches("trendingAnime")}
+                  hasMoreBatches={true}
+                  loadingMoreBatches={loadingBatchCategory === "trendingAnime"}
+                />
+
+                {/* Category 02: Top Airing Releases */}
                 <ExploreCategorySection
                   title="Current Airing Broadcasts"
                   items={seasonal}
@@ -3113,7 +3128,7 @@ function ExploreView({
                   loadingMoreBatches={loadingBatchCategory === "seasonal"}
                 />
 
-                {/* Category 02: All-Time Masterpieces */}
+                {/* Category 03: All-Time Masterpieces */}
                 <ExploreCategorySection
                   title="All-Time Titans & Masterpieces"
                   items={topAnime}
@@ -3222,7 +3237,33 @@ function ExploreView({
               </>
             ) : (
               <>
-                {/* Category 01: Top-Tier Manga Classics */}
+                {/* Category 01: Trending Manga Releases */}
+                <ExploreCategorySection
+                  title="Trending This Week"
+                  items={trendingManga.length > 0 ? trendingManga : topManga}
+                  entryMap={entryMap}
+                  onAdd={onAdd}
+                  onDetail={onDetail}
+                  isMultiSelect={isMultiSelect}
+                  selectedCatalogMap={selectedCatalogMap}
+                  onToggleCatalogItem={handleToggleCatalogItem}
+                  onViewAll={() =>
+                    setActiveCategoryView({
+                      id: "manga-trending",
+                      title: "Trending This Week",
+                      subtitle: "The most read, trending, and hotly discussed manga releases right now",
+                      kanji: "急上昇",
+                      type: "manga",
+                      categoryType: "trending",
+                      initialItems: trendingManga,
+                    })
+                  }
+                  onLoadMoreBatches={() => loadMoreBatches("trendingManga")}
+                  hasMoreBatches={true}
+                  loadingMoreBatches={loadingBatchCategory === "trendingManga"}
+                />
+
+                {/* Category 02: Top-Tier Manga Classics */}
                 <ExploreCategorySection
                   title="Top-Tier Manga Masterpieces"
                   items={topManga}
