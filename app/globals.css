@@ -4494,3 +4494,352 @@ body::after {
   align-items: center;
   gap: 10px;
 }
+
+/* ==========================================================================
+   COLLECTION / FRANCHISE FOLDER HIERARCHY STYLES
+   ========================================================================== */
+
+/* Stacked Folder Card Presentation */
+.folder-stack-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.folder-stack-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  opacity: 0.45;
+  filter: brightness(0.65) saturate(0.85);
+  pointer-events: none;
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s ease;
+}
+
+.folder-stack-bg.stack-1 {
+  transform: rotate(-3deg) translate(-4px, -3px) scale(0.97);
+  z-index: 1;
+}
+
+.folder-stack-bg.stack-2 {
+  transform: rotate(3deg) translate(4px, -2px) scale(0.95);
+  z-index: 0;
+}
+
+.card:hover .folder-stack-bg.stack-1 {
+  transform: rotate(-5deg) translate(-7px, -5px) scale(0.98);
+  opacity: 0.65;
+}
+
+.card:hover .folder-stack-bg.stack-2 {
+  transform: rotate(5deg) translate(7px, -4px) scale(0.96);
+  opacity: 0.6;
+}
+
+.folder-stack-main {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.card.is-folder {
+  border-color: rgba(196, 168, 79, 0.35);
+}
+
+.card.is-folder:hover {
+  border-color: var(--gold);
+}
+
+.folder-badge-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  background: rgba(17, 17, 24, 0.92);
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--gold);
+  color: var(--gold);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 3px 7px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.folder-badge-tag .folder-icon {
+  font-size: 11px;
+}
+
+.score-badge.collection-avg {
+  background: rgba(196, 168, 79, 0.92);
+  color: #0D0D12;
+  font-weight: 800;
+  border: 1px solid #C4A84F;
+}
+
+/* Folder Collection Inspector Modal */
+.folder-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(13, 13, 18, 0.85);
+  backdrop-filter: blur(8px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.folder-modal-box {
+  background: var(--surface-1);
+  border: 1px solid var(--border-hi);
+  border-radius: 8px;
+  max-width: 840px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.folder-modal-header {
+  padding: 18px 24px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.folder-modal-eyebrow {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.folder-modal-title {
+  font-family: var(--font-heading, "Cinzel", serif);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-1);
+  line-height: 1.25;
+}
+
+.folder-modal-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.folder-stat-pill {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+
+.folder-stat-pill.gold {
+  border-color: rgba(196, 168, 79, 0.4);
+  color: var(--gold);
+}
+
+.folder-stat-pill.teal {
+  border-color: rgba(61, 184, 156, 0.4);
+  color: var(--teal);
+}
+
+.folder-modal-close {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  border-radius: 4px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 14px;
+}
+
+.folder-modal-close:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+  border-color: var(--border-hi);
+}
+
+.folder-modal-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.folder-contained-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.folder-contained-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  transition: all 0.15s ease;
+}
+
+.folder-contained-card:hover {
+  border-color: var(--border-hi);
+  background: var(--surface-3);
+}
+
+.folder-contained-card.completed {
+  border-left: 3px solid var(--teal);
+}
+
+.folder-contained-thumb {
+  width: 48px;
+  height: 68px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+
+.folder-contained-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-contained-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.folder-season-tag {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  background: var(--surface-4);
+  border-radius: 3px;
+  color: var(--text-2);
+}
+
+.folder-season-tag.s1 {
+  background: rgba(232, 25, 75, 0.15);
+  color: var(--accent);
+}
+
+.folder-contained-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-contained-meta {
+  font-size: 11px;
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.folder-contained-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.folder-action-btn {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.folder-action-btn:hover {
+  background: var(--surface-4);
+  color: var(--text-1);
+  border-color: var(--border-hi);
+}
+
+.folder-action-btn.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.folder-action-btn.primary:hover {
+  filter: brightness(1.1);
+}
+
+.folder-action-btn.done-btn.active {
+  background: rgba(61, 184, 156, 0.15);
+  color: var(--teal);
+  border-color: var(--teal);
+}
+
+.folder-modal-footer {
+  padding: 14px 24px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+

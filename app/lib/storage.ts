@@ -577,7 +577,8 @@ export function bundleFranchiseEntries(
   primaryProgress: number,
   primaryStatus: OkamiStatus,
   userScore: number | null,
-  notes: string
+  notes: string,
+  customTitle?: string
 ): { updatedFranchises: Record<string, UnifiedFranchiseEntry>; franchiseId: string } {
   const allIds = Array.from(new Set([primaryItem.id, ...selectedItems.map((i) => i.id)]));
 
@@ -740,10 +741,17 @@ export function bundleFranchiseEntries(
       ? "READING"
       : "PLAN_TO_READ";
 
+  const cleanedTitle = cleanFranchiseTitle(primaryItem.title);
+  const computedTitle = customTitle?.trim()
+    ? customTitle.trim()
+    : animeItems.length > 1
+      ? `${cleanedTitle} Series`
+      : primaryItem.title;
+
   const nextFranchise: UnifiedFranchiseEntry = {
     franchiseId,
     rootMalId,
-    title: existingFranchise?.title || primaryItem.title,
+    title: existingFranchise?.title || computedTitle,
     coverImage: existingFranchise?.coverImage || primaryItem.cover,
     bannerImage: existingFranchise?.bannerImage,
     genres: existingFranchise?.genres || [],
@@ -1466,6 +1474,29 @@ export function useOkamiStore() {
 
 // ─── Display Helper ───
 
+export interface FranchiseContainedItem {
+  id: number;
+  title: string;
+  titleEnglish?: string | null;
+  cover: string;
+  type: "anime" | "manga";
+  format: string;
+  year?: number;
+  score: number;
+  status: OkamiStatus;
+  seasonNumber?: number;
+  total?: number | null;
+}
+
+export function cleanFranchiseTitle(title: string): string {
+  if (!title) return "Franchise Collection";
+  const cleaned = title
+    .replace(/\s*[:\-–—]\s*(Season\s*\d+|Part\s*\d+|Cour\s*\d+|\d+(st|nd|rd|th)\s*Season|The\s*Final\s*Season|2nd\s*Season|3rd\s*Season|4th\s*Season).*$/i, "")
+    .replace(/\s+(Season\s*\d+|Part\s*\d+|Cour\s*\d+|\d+(st|nd|rd|th)\s*Season|The\s*Final\s*Season|2nd\s*Season|3rd\s*Season|4th\s*Season).*$/i, "")
+    .trim();
+  return cleaned || title;
+}
+
 export interface FranchiseDisplayInfo {
   franchiseId: string;
   rootMalId: number;
@@ -1487,6 +1518,13 @@ export interface FranchiseDisplayInfo {
   totalAvailable: number;
   totalProgress: number;
   updatedAt: number;
+  // Collection & Folder Hierarchy
+  isFolder: boolean;
+  folderCovers: string[];
+  averageScore: number;
+  itemCount: number;
+  completedCount: number;
+  containedItems: FranchiseContainedItem[];
 }
 
 // ─── Advance Season (Mark current season completed, advance to next) ───
@@ -1559,6 +1597,96 @@ export function advanceSeason(
   return nextFranchises;
 }
 
+export function updateFranchiseTitle(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  newTitle: string
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  if (!franchise) return entries;
+  const next = {
+    ...entries,
+    [franchiseId]: {
+      ...franchise,
+      title: newTitle.trim() || franchise.title,
+      updatedAt: Date.now(),
+    },
+  };
+  saveFranchiseEntries(next);
+  return next;
+}
+
+export function updateContainedSeasonStatus(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  malId: number,
+  newStatus: OkamiStatus
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  if (!franchise?.anime?.seasons?.[malId]) return entries;
+  const targetWatchStatus: WatchStatus =
+    newStatus === "completed"
+      ? "COMPLETED"
+      : newStatus === "watching"
+        ? "WATCHING"
+        : newStatus === "on_hold"
+          ? "ON_HOLD"
+          : newStatus === "dropped"
+            ? "DROPPED"
+            : "PLAN_TO_WATCH";
+  const now = Date.now();
+  const nextSeasons = {
+    ...franchise.anime.seasons,
+    [malId]: {
+      ...franchise.anime.seasons[malId],
+      status: targetWatchStatus,
+      completedAt: targetWatchStatus === "COMPLETED" ? now : undefined,
+      updatedAt: now,
+    },
+  };
+  const allDone = Object.values(nextSeasons).every((s) => s.status === "COMPLETED");
+  const anyWatching = Object.values(nextSeasons).some((s) => s.status === "WATCHING");
+  const overall: WatchStatus = allDone ? "COMPLETED" : anyWatching ? "WATCHING" : "PLAN_TO_WATCH";
+  const next = {
+    ...entries,
+    [franchiseId]: {
+      ...franchise,
+      updatedAt: now,
+      anime: {
+        ...franchise.anime,
+        overallStatus: overall,
+        seasons: nextSeasons,
+      },
+    },
+  };
+  saveFranchiseEntries(next);
+  return next;
+}
+
+export function removeItemFromFranchise(
+  entries: Record<string, UnifiedFranchiseEntry>,
+  franchiseId: string,
+  malId: number
+): Record<string, UnifiedFranchiseEntry> {
+  const franchise = entries[franchiseId];
+  if (!franchise) return entries;
+  const nextSeasons = { ...(franchise.anime?.seasons || {}) };
+  delete nextSeasons[malId];
+  const nextLinked = (franchise.linkedMalIds || []).filter((id) => id !== malId);
+  const now = Date.now();
+  const next = {
+    ...entries,
+    [franchiseId]: {
+      ...franchise,
+      updatedAt: now,
+      linkedMalIds: nextLinked,
+      ...(franchise.anime ? { anime: { ...franchise.anime, seasons: nextSeasons } } : {}),
+    },
+  };
+  saveFranchiseEntries(next);
+  return next;
+}
+
 export function getFranchiseDisplayInfo(
   franchise: UnifiedFranchiseEntry
 ): FranchiseDisplayInfo {
@@ -1580,16 +1708,68 @@ export function getFranchiseDisplayInfo(
   let totalAvailable = 0;
   let totalProgress = 0;
 
+  const containedItems: FranchiseContainedItem[] = [];
+  const folderCovers: string[] = [];
+
+  for (const s of animeSeasons) {
+    if (s.coverImage && !folderCovers.includes(s.coverImage)) {
+      folderCovers.push(s.coverImage);
+    }
+    containedItems.push({
+      id: s.malId,
+      title: s.title,
+      titleEnglish: s.titleEnglish,
+      cover: s.coverImage || franchise.coverImage,
+      type: "anime",
+      format: s.type || "TV",
+      score: s.score || 0,
+      status: mapWatchStatusToLegacy(s.status),
+      seasonNumber: s.seasonNumber,
+      total: s.totalEpisodes || null,
+    });
+  }
+
+  for (const m of mangaSeries) {
+    if (m.coverImage && !folderCovers.includes(m.coverImage)) {
+      folderCovers.push(m.coverImage);
+    }
+    containedItems.push({
+      id: m.malId,
+      title: m.title,
+      cover: m.coverImage || franchise.coverImage,
+      type: "manga",
+      format: m.format || "Manga",
+      score: m.score || 0,
+      status: mapReadStatusToLegacy(m.status),
+      total: m.totalChapters || null,
+    });
+  }
+
+  if (folderCovers.length === 0 && franchise.coverImage) {
+    folderCovers.push(franchise.coverImage);
+  }
+
+  const validScores = containedItems.filter((i) => i.score > 0).map((i) => i.score);
+  const averageScore = validScores.length > 0
+    ? Number((validScores.reduce((a, b) => a + b, 0) / validScores.length).toFixed(1))
+    : 0;
+
+  const itemCount = hasAnime ? totalSeasons : mangaSeries.length;
+  const completedCount = hasAnime
+    ? animeSeasons.filter((s) => s.status === "COMPLETED").length
+    : mangaSeries.filter((m) => m.status === "COMPLETED").length;
+
+  const isFolder = itemCount > 1 || (Array.isArray(franchise.linkedMalIds) && franchise.linkedMalIds.length > 1);
+
   if (hasAnime && franchise.anime) {
     overallStatus = mapWatchStatusToLegacy(franchise.anime.overallStatus);
     const activeSeason = activeSeasonMalId
       ? franchise.anime.seasons[activeSeasonMalId]
       : animeSeasons[0];
 
-    const completedSeasonsCount = animeSeasons.filter((s) => s.status === "COMPLETED").length;
     totalAvailable = totalSeasons;
-    totalProgress = completedSeasonsCount;
-    unwatchedCount = Math.max(0, totalSeasons - completedSeasonsCount);
+    totalProgress = completedCount;
+    unwatchedCount = Math.max(0, totalSeasons - completedCount);
 
     if (activeSeason) {
       activeSeasonNumber = activeSeason.seasonNumber;
@@ -1598,7 +1778,7 @@ export function getFranchiseDisplayInfo(
         if (overallStatus === "completed") {
           progressLabel = `Completed (${totalSeasons} Seasons)`;
         } else {
-          progressLabel = `S${activeSeason.seasonNumber} • ${completedSeasonsCount}/${totalSeasons} Seasons`;
+          progressLabel = `S${activeSeason.seasonNumber} • ${completedCount}/${totalSeasons} Seasons`;
         }
       } else {
         progressLabel = overallStatus === "completed" ? "Completed" : `Season ${activeSeason.seasonNumber}`;
@@ -1647,6 +1827,12 @@ export function getFranchiseDisplayInfo(
     totalAvailable,
     totalProgress,
     updatedAt: franchise.updatedAt,
+    isFolder,
+    folderCovers,
+    averageScore,
+    itemCount,
+    completedCount,
+    containedItems,
   };
 }
 

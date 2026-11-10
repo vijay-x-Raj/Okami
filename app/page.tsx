@@ -29,7 +29,12 @@ import {
   getFranchiseDisplayInfo,
   type UnifiedFranchiseEntry,
   type FranchiseItemOption,
+  type FranchiseContainedItem,
   bundleFranchiseEntries,
+  updateFranchiseTitle,
+  updateContainedSeasonStatus,
+  removeItemFromFranchise,
+  cleanFranchiseTitle,
   TrackManager,
   type HistoryEntry,
   type CustomCategory,
@@ -84,6 +89,7 @@ const libraryFilters = {
     { label: "All", value: "all" },
     { label: "Anime", value: "anime" },
     { label: "Manga", value: "manga" },
+    { label: "Folders & Collections", value: "folders" },
     { label: "Films", value: "films" },
   ],
   genre: [
@@ -237,6 +243,12 @@ interface UnifiedLibraryItem {
   unreadCount: number;
   categories: string[];
   updatedAt: number;
+  isFolder: boolean;
+  folderCovers: string[];
+  averageOfficialScore: number;
+  itemCount: number;
+  completedCount: number;
+  containedItems: FranchiseContainedItem[];
 }
 
 function buildUnifiedLibraryItems(
@@ -287,6 +299,34 @@ function buildUnifiedLibraryItems(
     const resolvedOfficialScore =
       matchingEntry?.official_score || 0;
 
+    const isFolder = displayInfo.isFolder;
+    const folderCovers =
+      displayInfo.folderCovers && displayInfo.folderCovers.length > 0
+        ? displayInfo.folderCovers
+        : [franchise.coverImage];
+
+    // Enrich contained items with official scores, formats, years from entries
+    const enrichedContainedItems: FranchiseContainedItem[] = (displayInfo.containedItems || []).map((c) => {
+      const match = entries.find((e) => e.id === c.id && e.type === c.type);
+      return {
+        ...c,
+        year: match?.year || c.year,
+        score: match?.official_score && match.official_score > 0 ? match.official_score : c.score,
+        format: match?.format || c.format,
+      };
+    });
+
+    const validOfficialScores = enrichedContainedItems
+      .filter((i) => i.score > 0)
+      .map((i) => i.score);
+    const averageOfficialScore =
+      validOfficialScores.length > 0
+        ? Number((validOfficialScores.reduce((a, b) => a + b, 0) / validOfficialScores.length).toFixed(1))
+        : (displayInfo.averageScore || resolvedOfficialScore);
+
+    const itemCount = enrichedContainedItems.length > 0 ? enrichedContainedItems.length : (displayInfo.itemCount || 1);
+    const completedCount = displayInfo.completedCount || 0;
+
     items.push({
       id: franchise.franchiseId,
       rootMalId: franchise.rootMalId,
@@ -297,7 +337,7 @@ function buildUnifiedLibraryItems(
       format: matchingEntry?.format || (displayInfo.mediaType === "manga" ? "Manga" : "TV Series"),
       year: matchingEntry?.year || 0,
       genres: franchise.genres?.length ? franchise.genres : matchingEntry?.genres || [],
-      official_score: resolvedOfficialScore,
+      official_score: isFolder && averageOfficialScore > 0 ? averageOfficialScore : resolvedOfficialScore,
       user_score: resolvedUserScore,
       status: displayInfo.overallStatus,
       progressLabel: displayInfo.progressLabel || "--",
@@ -311,6 +351,12 @@ function buildUnifiedLibraryItems(
       unreadCount: displayInfo.unreadCount,
       categories: displayInfo.categories,
       updatedAt: franchise.updatedAt || franchise.addedAt || 0,
+      isFolder,
+      folderCovers,
+      averageOfficialScore,
+      itemCount,
+      completedCount,
+      containedItems: enrichedContainedItems,
     });
   }
 
@@ -346,6 +392,12 @@ function buildUnifiedLibraryItems(
       unreadCount: entry.type === "manga" ? diff : 0,
       categories: [],
       updatedAt: new Date(entry.date_added).getTime(),
+      isFolder: false,
+      folderCovers: [entry.cover],
+      averageOfficialScore: entry.official_score || 0,
+      itemCount: 1,
+      completedCount: entry.status === "completed" ? 1 : 0,
+      containedItems: [],
     });
   }
 
@@ -574,13 +626,14 @@ function LibraryView({
   onExplore,
   onClearFilters,
   onOpenTracker,
+  onOpenFolder,
 }: {
   entries: OkamiEntry[];
   franchises: Record<string, UnifiedFranchiseEntry>;
   onQuickIncrement: (item: UnifiedLibraryItem) => void;
   activeView: "grid" | "list";
   setActiveView: (value: "grid" | "list") => void;
-  activeType: "all" | "anime" | "manga" | "films";
+  activeType: "all" | "anime" | "manga" | "films" | "folders";
   activeGenre: string;
   activeStatus: OkamiStatus | "favorites" | "";
   sortBy: (typeof sortOptions)[number];
@@ -592,6 +645,7 @@ function LibraryView({
   onExplore: () => void;
   onClearFilters: () => void;
   onOpenTracker: (item: UnifiedLibraryItem) => void;
+  onOpenFolder: (item: UnifiedLibraryItem) => void;
 }) {
   // Mihon state filters: tri-state chips
   const [statusTriState, setStatusTriState] = useState<Record<string, TriState>>({});
@@ -648,11 +702,13 @@ function LibraryView({
         if (typeTriState["anime"] === "exclude" && (itemType === "anime" || itemType === "both")) return false;
         if (typeTriState["manga"] === "exclude" && (itemType === "manga" || itemType === "both")) return false;
         if (typeTriState["films"] === "exclude" && isFilm) return false;
+        if (typeTriState["folders"] === "exclude" && item.isFolder) return false;
 
         if (hasTypeInclude) {
           if (typeTriState["anime"] === "include" && (itemType === "anime" || itemType === "both")) return true;
           if (typeTriState["manga"] === "include" && (itemType === "manga" || itemType === "both")) return true;
           if (typeTriState["films"] === "include" && isFilm) return true;
+          if (typeTriState["folders"] === "include" && item.isFolder) return true;
           return false;
         }
         return true;
@@ -663,6 +719,8 @@ function LibraryView({
           const fmt = item.format?.toLowerCase?.() ?? "";
           return fmt.includes("film") || fmt.includes("movie");
         });
+      } else if (activeType === "folders") {
+        result = result.filter((item) => item.isFolder);
       } else {
         result = result.filter((item) => item.type === activeType || item.type === "both");
       }
@@ -1050,53 +1108,130 @@ function LibraryView({
                 : item.progressLabel;
 
             return (
-              <article className="card" key={item.id}>
+              <article className={`card ${item.isFolder ? "is-folder" : ""}`} key={item.id}>
                 <div
                   className="card-img-wrap"
                   role="button"
                   tabIndex={0}
-                  onClick={() => onOpenTracker(item)}
+                  onClick={() => (item.isFolder ? onOpenFolder(item) : onOpenTracker(item))}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      onOpenTracker(item);
+                      if (item.isFolder) onOpenFolder(item);
+                      else onOpenTracker(item);
                     }
                   }}
                 >
-                  <img className="card-img" src={item.cover} alt={item.title} />
-                  <div className="franchise-pointer-badge">{formattedProgress}</div>
+                  {item.isFolder ? (
+                    <div className="folder-stack-wrap">
+                      {item.folderCovers[2] ? (
+                        <img className="folder-stack-bg stack-2" src={item.folderCovers[2]} alt="" />
+                      ) : null}
+                      {item.folderCovers[1] ? (
+                        <img className="folder-stack-bg stack-1" src={item.folderCovers[1]} alt="" />
+                      ) : null}
+                      <img
+                        className="card-img folder-stack-main"
+                        src={item.folderCovers[0] || item.cover}
+                        alt={item.title}
+                      />
+                    </div>
+                  ) : (
+                    <img className="card-img" src={item.cover} alt={item.title} />
+                  )}
+
+                  {item.isFolder ? (
+                    <div className="folder-badge-tag">
+                      FOLDER • {item.itemCount} TITLES
+                    </div>
+                  ) : null}
+
+                  <div className="franchise-pointer-badge">
+                    {item.isFolder ? `${item.completedCount}/${item.itemCount} Done` : formattedProgress}
+                  </div>
                   <div className="card-img-overlay" />
 
                   {/* Mihon Unwatched / Unread Badge Pill */}
-                  {item.unwatchedCount > 0 ? (
+                  {!item.isFolder && item.unwatchedCount > 0 ? (
                     <div className="unwatched-badge">
                       {item.unwatchedCount} {isManga ? "Ch" : "Ep"} left
                     </div>
-                  ) : item.unreadCount > 0 ? (
+                  ) : !item.isFolder && item.unreadCount > 0 ? (
                     <div className="unwatched-badge">
                       {item.unreadCount} Ch left
                     </div>
                   ) : null}
 
                   <div className="card-actions">
+                    {item.isFolder ? (
+                      <button
+                        className="card-action-btn quick-plus"
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenFolder(item);
+                        }}
+                        title="Open and manage contained titles"
+                      >
+                        Open Folder
+                      </button>
+                    ) : (
+                      <button
+                        className="card-action-btn quick-plus"
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onQuickIncrement(item);
+                        }}
+                        title="Quick +1 progress (with auto-advance)"
+                      >
+                        +1 {isManga ? "Ch" : "Ep"}
+                      </button>
+                    )}
                     <button
-                      className="card-action-btn quick-plus"
+                      className="card-action-btn"
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        onQuickIncrement(item);
+                        if (item.isFolder) {
+                          onOpenFolder(item);
+                        } else {
+                          onEdit(
+                            item.legacyEntry || {
+                              id: item.activeMalId,
+                              type: isManga ? "manga" : "anime",
+                              title: item.title,
+                              cover: item.cover,
+                              year: item.year,
+                              format: item.format,
+                              genres: item.genres,
+                              official_score: item.official_score,
+                              user_score: item.user_score,
+                              status: item.status,
+                              progress: item.progressNum,
+                              total: item.totalNum,
+                              completed_seasons: [],
+                              completed_volumes: [],
+                              completed_episodes: Array.from({ length: item.progressNum }, (_, i) => i + 1),
+                              date_added: item.date_added,
+                              notes: "",
+                              is_favourite: item.is_favourite,
+                            }
+                          );
+                        }
                       }}
-                      title="Quick +1 progress (with auto-advance)"
                     >
-                      +1 {isManga ? "Ch" : "Ep"}
+                      {item.isFolder ? "Manage" : "Update"}
                     </button>
                     <button
                       className="card-action-btn"
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        onEdit(
-                          item.legacyEntry || {
+                        if (item.isFolder) {
+                          onOpenFolder(item);
+                        } else {
+                          onDetail({
                             id: item.activeMalId,
                             type: isManga ? "manga" : "anime",
                             title: item.title,
@@ -1105,62 +1240,65 @@ function LibraryView({
                             format: item.format,
                             genres: item.genres,
                             official_score: item.official_score,
-                            user_score: item.user_score,
-                            status: item.status,
-                            progress: item.progressNum,
                             total: item.totalNum,
-                            completed_seasons: [],
-                            completed_volumes: [],
-                            completed_episodes: Array.from({ length: item.progressNum }, (_, i) => i + 1),
-                            date_added: item.date_added,
-                            notes: "",
-                            is_favourite: item.is_favourite,
-                          }
-                        );
-                      }}
-                    >
-                      Update
-                    </button>
-                    <button
-                      className="card-action-btn"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onDetail({
-                          id: item.activeMalId,
-                          type: isManga ? "manga" : "anime",
-                          title: item.title,
-                          cover: item.cover,
-                          year: item.year,
-                          format: item.format,
-                          genres: item.genres,
-                          official_score: item.official_score,
-                          total: item.totalNum,
-                        });
+                          });
+                        }
                       }}
                     >
                       Info
                     </button>
                   </div>
-                  <div className={`score-badge ${item.official_score >= 8.5 ? "gold" : ""}`}>
-                    {formatScore(item.official_score)}
+                  <div
+                    className={`score-badge ${item.official_score >= 8.5 ? "gold" : ""} ${item.isFolder ? "collection-avg" : ""}`}
+                  >
+                    {item.isFolder
+                      ? `★ ${item.averageOfficialScore ? item.averageOfficialScore.toFixed(1) : item.official_score.toFixed(1)} Avg`
+                      : formatScore(item.official_score)}
                   </div>
                   <div className={`status-badge ${statusClass(item.status)}`}>{statusLabel(item.status)}</div>
                 </div>
                 <div className="card-info">
-                  <Link
-                    className="card-title"
-                    href={isManga ? `/manga/${item.activeMalId}/info` : `/anime/${item.activeMalId}/info`}
-                  >
-                    {item.title}
-                  </Link>
+                  {item.isFolder ? (
+                    <button
+                      type="button"
+                      className="card-title"
+                      style={{
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                        textAlign: "left",
+                        cursor: "pointer",
+                        font: "inherit",
+                        color: "inherit",
+                      }}
+                      onClick={() => onOpenFolder(item)}
+                    >
+                      {item.title}
+                    </button>
+                  ) : (
+                    <Link
+                      className="card-title"
+                      href={isManga ? `/manga/${item.activeMalId}/info` : `/anime/${item.activeMalId}/info`}
+                    >
+                      {item.title}
+                    </Link>
+                  )}
                   <div className="card-meta">
-                    <span className={`type-chip ${category.className}`}>{category.label}</span>
+                    <span className={`type-chip ${category.className}`}>
+                      {item.isFolder ? "Folder" : category.label}
+                    </span>
                     <span className="meta-dot">•</span>
                     <span>{item.year || "--"}</span>
                     <span className="meta-dot">•</span>
                     <span>{item.format}</span>
-                    {item.franchise &&
+                    {item.isFolder ? (
+                      <>
+                        <span className="meta-dot">•</span>
+                        <span className="franchise-part-count-pill">
+                          {item.itemCount} Parts
+                        </span>
+                      </>
+                    ) : item.franchise &&
                       (Object.keys(item.franchise.anime?.seasons || {}).length > 1 ||
                         Object.keys(item.franchise.manga?.series || {}).length > 1) ? (
                       <>
@@ -1213,35 +1351,81 @@ function LibraryView({
                 className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${item.status === "watching" ? "row-watching" : ""}`}
               >
                 <span className="mono">{String(index + 1).padStart(2, "0")}</span>
-                <Link
-                  aria-label={`Open tracker for ${item.title}`}
-                  href={isManga ? `/manga/${item.activeMalId}` : `/anime/${item.activeMalId}`}
-                >
-                  <img className="row-cover" src={item.cover} alt={item.title} />
-                </Link>
-                <Link
-                  className="title-cell"
-                  href={isManga ? `/manga/${item.activeMalId}/info` : `/anime/${item.activeMalId}/info`}
-                >
-                  {item.title}
-                </Link>
-                <span className={`type-chip ${category.className}`}>{category.label}</span>
+                {item.isFolder ? (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => onOpenFolder(item)}
+                    aria-label={`Open folder for ${item.title}`}
+                  >
+                    <img className="row-cover" src={item.cover} alt={item.title} />
+                  </div>
+                ) : (
+                  <Link
+                    aria-label={`Open tracker for ${item.title}`}
+                    href={isManga ? `/manga/${item.activeMalId}` : `/anime/${item.activeMalId}`}
+                  >
+                    <img className="row-cover" src={item.cover} alt={item.title} />
+                  </Link>
+                )}
+                {item.isFolder ? (
+                  <div
+                    className="title-cell"
+                    role="button"
+                    tabIndex={0}
+                    style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                    onClick={() => onOpenFolder(item)}
+                  >
+                    <span className="folder-badge-tag" style={{ position: "static", display: "inline-block" }}>
+                      FOLDER
+                    </span>
+                    <span>{item.title}</span>
+                  </div>
+                ) : (
+                  <Link
+                    className="title-cell"
+                    href={isManga ? `/manga/${item.activeMalId}/info` : `/anime/${item.activeMalId}/info`}
+                  >
+                    {item.title}
+                  </Link>
+                )}
+                <span className={`type-chip ${category.className}`}>
+                  {item.isFolder ? "Folder" : category.label}
+                </span>
                 <span className="mono">{item.user_score ?? "--"}</span>
-                <span className="mono">{formatScore(item.official_score)}</span>
+                <span className="mono" style={{ color: item.isFolder ? "var(--gold)" : undefined }}>
+                  {item.isFolder
+                    ? `★ ${item.averageOfficialScore ? item.averageOfficialScore.toFixed(1) : item.official_score.toFixed(1)} Avg`
+                    : formatScore(item.official_score)}
+                </span>
                 <span className={`status-chip ${statusClass(item.status)}`}>{statusLabel(item.status)}</span>
-                <span className="mono">{item.progressLabel}</span>
+                <span className="mono">
+                  {item.isFolder ? `${item.completedCount}/${item.itemCount} Done` : item.progressLabel}
+                </span>
                 <span className="mono" style={{ color: unplayedCount > 0 ? "var(--accent)" : "var(--text-3)" }}>
                   {unplayedCount > 0 ? `+${unplayedCount}` : "0"}
                 </span>
                 <div>
-                  <button
-                    className="card-action-btn quick-plus"
-                    style={{ padding: "4px 8px", fontSize: 11 }}
-                    type="button"
-                    onClick={() => onQuickIncrement(item)}
-                  >
-                    +1 {isManga ? "Ch" : "Ep"}
-                  </button>
+                  {item.isFolder ? (
+                    <button
+                      className="card-action-btn"
+                      style={{ padding: "4px 8px", fontSize: 11 }}
+                      type="button"
+                      onClick={() => onOpenFolder(item)}
+                    >
+                      Open Folder
+                    </button>
+                  ) : (
+                    <button
+                      className="card-action-btn quick-plus"
+                      style={{ padding: "4px 8px", fontSize: 11 }}
+                      type="button"
+                      onClick={() => onQuickIncrement(item)}
+                    >
+                      +1 {isManga ? "Ch" : "Ep"}
+                    </button>
+                  )}
                 </div>
                 <span className="mono">{item.date_added.slice(0, 10)}</span>
                 {item.legacyEntry ? (
@@ -1943,6 +2127,175 @@ function CustomHeroSlider({
   );
 }
 
+// ─── Modal: Bundle Into Collection Folder ───
+
+function BundleNamingModal({
+  selectedItems,
+  initialTitle,
+  initialStatus,
+  onClose,
+  onConfirm,
+}: {
+  selectedItems: OkamiMedia[];
+  initialTitle: string;
+  initialStatus: OkamiStatus;
+  onClose: () => void;
+  onConfirm: (title: string, status: OkamiStatus) => void;
+}) {
+  const [folderTitle, setFolderTitle] = useState(initialTitle);
+  const [folderStatus, setFolderStatus] = useState<OkamiStatus>(initialStatus);
+
+  const averageScore = useMemo(() => {
+    const valid = selectedItems
+      .filter((i) => i.official_score && i.official_score > 0)
+      .map((i) => i.official_score!);
+    if (valid.length === 0) return 0;
+    return Number((valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(1));
+  }, [selectedItems]);
+
+  return (
+    <div className="folder-modal-backdrop" onClick={onClose}>
+      <div className="folder-modal-box" style={{ maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
+        <div className="folder-modal-header">
+          <div style={{ flex: 1 }}>
+            <div className="folder-modal-eyebrow">NEW COLLECTION FOLDER • {selectedItems.length} TITLES</div>
+            <h2 className="folder-modal-title" style={{ margin: "4px 0" }}>
+              Bundle Into Collection Folder
+            </h2>
+            <div style={{ fontSize: 12, color: "var(--text-2)" }}>
+              Group selected releases under a single cohesive library folder with shared tracking and average rating.
+            </div>
+          </div>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close modal">
+            ✕
+          </button>
+        </div>
+
+        <div className="folder-modal-body">
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--text-2)" }}>
+                Collection / Folder Title
+              </label>
+              <input
+                className="search-input"
+                style={{ width: "100%", fontSize: 14 }}
+                value={folderTitle}
+                onChange={(e) => setFolderTitle(e.target.value)}
+                placeholder="e.g. Attack on Titan Series"
+                autoFocus
+              />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--text-2)" }}>
+                  Initial Status
+                </label>
+                <select
+                  className="search-input"
+                  style={{ width: "100%", fontSize: 12, padding: "8px 10px", background: "var(--surface-2)" }}
+                  value={folderStatus}
+                  onChange={(e) => setFolderStatus(e.target.value as OkamiStatus)}
+                >
+                  <option value="plan_to_watch">Plan to Watch / Read</option>
+                  <option value="watching">Watching / Reading</option>
+                  <option value="completed">Completed</option>
+                  <option value="on_hold">On Hold</option>
+                  <option value="dropped">Dropped</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--text-2)" }}>
+                  Collection MAL Average
+                </label>
+                <div
+                  style={{
+                    padding: "8px 12px",
+                    background: "var(--surface-2)",
+                    borderRadius: 6,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "var(--gold)",
+                  }}
+                >
+                  ★ {averageScore > 0 ? averageScore.toFixed(1) : "--"} MAL Average
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 8, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.8 }}>
+                Bundled Titles ({selectedItems.length})
+              </div>
+              <div style={{ maxHeight: 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+                {selectedItems.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "6px 10px",
+                      background: "var(--surface-2)",
+                      borderRadius: 6,
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    <img
+                      src={item.cover}
+                      alt={item.title}
+                      style={{ width: 34, height: 48, objectFit: "cover", borderRadius: 4 }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: "var(--text-1)",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {idx + 1}. {item.title}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-3)", display: "flex", gap: 8, marginTop: 2 }}>
+                        <span>{item.format || (item.type === "manga" ? "Manga" : "TV")}</span>
+                        {item.year ? <span>• {item.year}</span> : null}
+                        {item.official_score ? (
+                          <span style={{ color: "var(--gold)", fontWeight: 700 }}>
+                            • ★ {item.official_score.toFixed(1)}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="folder-modal-footer">
+          <button type="button" className="folder-action-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="folder-action-btn primary"
+            disabled={!folderTitle.trim()}
+            onClick={() => onConfirm(folderTitle.trim(), folderStatus)}
+          >
+            Create Collection Folder ({selectedItems.length} Titles)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── 2. Explore View (Unified Theme) ───
 
 function ExploreView({
@@ -1973,9 +2326,11 @@ function ExploreView({
   const [activeCategoryView, setActiveCategoryView] = useState<ExploreCategoryConfig | null>(null);
   const [loadingBatchCategory, setLoadingBatchCategory] = useState<string | null>(null);
 
-  // Multi-Select Catalog State
+  // Multi-Select Catalog State & Bundle Modal
   const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [selectedCatalogMap, setSelectedCatalogMap] = useState<Map<number, OkamiMedia>>(new Map());
+  const [bundleModalOpen, setBundleModalOpen] = useState(false);
+  const [bundleInitialTitle, setBundleInitialTitle] = useState("");
 
   const handleToggleCatalogItem = (item: OkamiMedia) => {
     setSelectedCatalogMap((prev) => {
@@ -1993,7 +2348,16 @@ function ExploreView({
     setSelectedCatalogMap(new Map());
   };
 
-  const handleAddSelectedAsUnified = () => {
+  const handleOpenBundleModal = () => {
+    const selectedList = Array.from(selectedCatalogMap.values());
+    if (selectedList.length === 0) return;
+    const primaryItem = selectedList[0];
+    const defaultTitle = cleanFranchiseTitle(primaryItem.title);
+    setBundleInitialTitle(defaultTitle ? `${defaultTitle} Series` : `${primaryItem.title} Collection`);
+    setBundleModalOpen(true);
+  };
+
+  const handleConfirmBundle = (customTitle: string, status: OkamiStatus) => {
     const selectedList = Array.from(selectedCatalogMap.values());
     if (selectedList.length === 0) return;
 
@@ -2020,14 +2384,17 @@ function ExploreView({
       isCurrent: idx === 0,
     }));
 
+    const finalTitle = customTitle.trim() || `${cleanFranchiseTitle(primaryItem.title)} Collection`;
+
     const { updatedFranchises } = bundleFranchiseEntries(
       franchises,
       primaryOpt,
       otherOpts,
       0,
-      "plan_to_watch",
+      status,
       null,
-      `Bundled ${selectedList.length} titles from catalog multi-select`
+      `Bundled ${selectedList.length} titles from catalog multi-select`,
+      finalTitle
     );
 
     onCommitFranchises(updatedFranchises);
@@ -2046,14 +2413,14 @@ function ExploreView({
           genres: m.genres,
           official_score: m.official_score,
           user_score: null,
-          status: "plan_to_watch",
+          status,
           progress: 0,
           total: m.total ?? null,
           completed_seasons: [],
           completed_volumes: [],
           completed_episodes: [],
           date_added: now,
-          notes: `Franchise: ${primaryItem.title}`,
+          notes: `Franchise: ${finalTitle}`,
           is_favourite: false,
         });
       }
@@ -2062,6 +2429,7 @@ function ExploreView({
 
     setSelectedCatalogMap(new Map());
     setIsMultiSelect(false);
+    setBundleModalOpen(false);
   };
 
   const handleAddSelectedIndividually = () => {
@@ -3022,7 +3390,7 @@ function ExploreView({
             <button
               type="button"
               className="batch-btn primary"
-              onClick={handleAddSelectedAsUnified}
+              onClick={handleOpenBundleModal}
               title="Bundle all selected titles into 1 single unified franchise entry in your library"
             >
               + Add as 1 Unified Entry to Library
@@ -3030,6 +3398,16 @@ function ExploreView({
           </div>
         </div>
       )}
+
+      {bundleModalOpen ? (
+        <BundleNamingModal
+          selectedItems={Array.from(selectedCatalogMap.values())}
+          initialTitle={bundleInitialTitle}
+          initialStatus="plan_to_watch"
+          onClose={() => setBundleModalOpen(false)}
+          onConfirm={handleConfirmBundle}
+        />
+      ) : null}
     </div>
   );
 }
@@ -3045,6 +3423,7 @@ function MyListView({
   onCommitEntries,
   onCommitFranchises,
   onOpenTracker,
+  onOpenFolder,
   onExplore,
 }: {
   entries: OkamiEntry[];
@@ -3055,6 +3434,7 @@ function MyListView({
   onCommitEntries: (next: OkamiEntry[]) => void;
   onCommitFranchises: (next: Record<string, UnifiedFranchiseEntry>) => void;
   onOpenTracker: (item: UnifiedLibraryItem) => void;
+  onOpenFolder?: (item: UnifiedLibraryItem) => void;
   onExplore: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<string>("All");
@@ -3770,25 +4150,43 @@ function MyListView({
                 <button
                   type="button"
                   style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
-                  onClick={() => onOpenTracker(item)}
-                  title="Open dedicated media tracker"
+                  onClick={() => (item.isFolder && onOpenFolder ? onOpenFolder(item) : onOpenTracker(item))}
+                  title={item.isFolder ? "Open folder collection" : "Open dedicated media tracker"}
                 >
                   <img className="mylist-cover-thumb" src={item.cover} alt={item.title} />
                 </button>
 
                 {/* 3. Title */}
                 <div className="mylist-title-group">
-                  <button
-                    type="button"
-                    className="mylist-title-link"
-                    style={{ background: "transparent", border: "none", padding: 0, textAlign: "left", cursor: "pointer" }}
-                    onClick={() => onOpenTracker(item)}
-                    title={item.title}
-                  >
-                    {item.title}
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    {item.isFolder ? (
+                      <span className="folder-badge-tag" style={{ position: "static", display: "inline-block", padding: "1px 5px", fontSize: 9 }}>
+                        FOLDER
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="mylist-title-link"
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        padding: 0,
+                        textAlign: "left",
+                        cursor: "pointer",
+                        fontWeight: item.isFolder ? 700 : 500,
+                      }}
+                      onClick={() => (item.isFolder && onOpenFolder ? onOpenFolder(item) : onOpenTracker(item))}
+                      title={item.title}
+                    >
+                      {item.title}
+                    </button>
+                  </div>
                   <div className="mylist-title-meta">
-                    <span>{item.format || (item.type === "manga" ? "Manga" : "TV")}</span>
+                    <span>
+                      {item.isFolder
+                        ? `${item.itemCount} Titles Contained`
+                        : item.format || (item.type === "manga" ? "Manga" : "TV")}
+                    </span>
                     {item.year ? <span>• {item.year}</span> : null}
                     {item.genres?.length ? <span>• {item.genres.slice(0, 2).join(", ")}</span> : null}
                   </div>
@@ -3796,7 +4194,9 @@ function MyListView({
 
                 {/* 4. Format chip */}
                 <div style={{ textAlign: "center" }}>
-                  <span className={`type-chip ${category.className}`}>{category.label}</span>
+                  <span className={`type-chip ${category.className}`}>
+                    {item.isFolder ? "Folder" : category.label}
+                  </span>
                 </div>
 
                 {/* 5. User Score (Interactive Popover Score Cell) */}
@@ -3812,9 +4212,17 @@ function MyListView({
                   <span
                     className="mono"
                     style={{ color: "var(--gold)", fontWeight: 700, fontSize: 11 }}
-                    title={`Official MyAnimeList Rating: ${item.official_score ? item.official_score.toFixed(2) : "Unrated"}`}
+                    title={
+                      item.isFolder
+                        ? `Official Collection Rating: Average of ${item.itemCount} titles`
+                        : `Official MyAnimeList Rating: ${item.official_score ? item.official_score.toFixed(2) : "Unrated"}`
+                    }
                   >
-                    {item.official_score && item.official_score > 0 ? item.official_score.toFixed(1) : "--"}
+                    {item.isFolder
+                      ? `★ ${item.averageOfficialScore ? item.averageOfficialScore.toFixed(1) : (item.official_score ? item.official_score.toFixed(1) : "--")} Avg`
+                      : item.official_score && item.official_score > 0
+                        ? item.official_score.toFixed(1)
+                        : "--"}
                   </span>
                 </div>
 
@@ -3835,64 +4243,75 @@ function MyListView({
                   </select>
                 </div>
 
-                {/* 8. Progress Stepper: [-1] [input / label] [+1] */}
+                {/* 8. Progress Stepper / Folder Done */}
                 <div style={{ display: "flex", justifyContent: "center" }}>
-                  <div className="mylist-table-stepper">
+                  {item.isFolder ? (
                     <button
                       type="button"
-                      className="mylist-stepper-btn"
-                      onClick={() => handleUpdateItemProgress(item, item.progressNum - 1)}
-                      disabled={item.progressNum <= 0}
-                      title="Decrease by 1"
+                      className="folder-action-btn"
+                      style={{ padding: "4px 10px", fontSize: 11 }}
+                      onClick={() => (onOpenFolder ? onOpenFolder(item) : onOpenTracker(item))}
                     >
-                      -
+                      {item.completedCount}/{item.itemCount} Done (Manage)
                     </button>
+                  ) : (
+                    <div className="mylist-table-stepper">
+                      <button
+                        type="button"
+                        className="mylist-stepper-btn"
+                        onClick={() => handleUpdateItemProgress(item, item.progressNum - 1)}
+                        disabled={item.progressNum <= 0}
+                        title="Decrease by 1"
+                      >
+                        -
+                      </button>
 
-                    {isEditingProg ? (
-                      <input
-                        className="inline-input"
-                        type="number"
-                        min={0}
-                        max={item.totalNum ?? 99999}
-                        value={editingProgressVal}
-                        autoFocus
-                        style={{ width: 55, textAlign: "center", fontSize: 11, padding: "1px 2px" }}
-                        onChange={(e) => setEditingProgressVal(Number(e.target.value) || 0)}
-                        onBlur={() => {
-                          handleUpdateItemProgress(item, editingProgressVal);
-                          setEditingProgressKey(null);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
+                      {isEditingProg ? (
+                        <input
+                          className="inline-input"
+                          type="number"
+                          min={0}
+                          max={item.totalNum ?? 99999}
+                          value={editingProgressVal}
+                          autoFocus
+                          style={{ width: 55, textAlign: "center", fontSize: 11, padding: "1px 2px" }}
+                          onChange={(e) => setEditingProgressVal(Number(e.target.value) || 0)}
+                          onBlur={() => {
                             handleUpdateItemProgress(item, editingProgressVal);
                             setEditingProgressKey(null);
-                          }
-                          if (e.key === "Escape") setEditingProgressKey(null);
-                        }}
-                      />
-                    ) : (
-                      <span
-                        className="mylist-stepper-value"
-                        onClick={() => {
-                          setEditingProgressKey(item.id);
-                          setEditingProgressVal(item.progressNum);
-                        }}
-                        title="Click to type exact progress"
-                      >
-                        {unit} {item.progressNum} / {item.totalNum ?? "?"}
-                      </span>
-                    )}
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              handleUpdateItemProgress(item, editingProgressVal);
+                              setEditingProgressKey(null);
+                            }
+                            if (e.key === "Escape") setEditingProgressKey(null);
+                          }}
+                        />
+                      ) : (
+                        <span
+                          className="mylist-stepper-value"
+                          onClick={() => {
+                            setEditingProgressKey(item.id);
+                            setEditingProgressVal(item.progressNum);
+                          }}
+                          title="Click to type exact progress"
+                        >
+                          {unit} {item.progressNum} / {item.totalNum ?? "?"}
+                        </span>
+                      )}
 
-                    <button
-                      type="button"
-                      className="mylist-stepper-btn"
-                      onClick={() => handleUpdateItemProgress(item, item.progressNum + 1)}
-                      disabled={item.totalNum !== null && item.progressNum >= item.totalNum}
-                      title="Quick +1 progress"
-                    >
-                      +
-                    </button>
-                  </div>
+                      <button
+                        type="button"
+                        className="mylist-stepper-btn"
+                        onClick={() => handleUpdateItemProgress(item, item.progressNum + 1)}
+                        disabled={item.totalNum !== null && item.progressNum >= item.totalNum}
+                        title="Quick +1 progress"
+                      >
+                        +
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* 9. Added Date */}
@@ -3916,12 +4335,12 @@ function MyListView({
                     </svg>
                   </button>
 
-                  {/* Open Tracker Link */}
+                  {/* Open Tracker / Folder Link */}
                   <button
                     type="button"
                     className="mylist-icon-btn"
-                    onClick={() => onOpenTracker(item)}
-                    title="Open Tracker"
+                    onClick={() => (item.isFolder && onOpenFolder ? onOpenFolder(item) : onOpenTracker(item))}
+                    title={item.isFolder ? "Open Folder Collection" : "Open Tracker"}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
@@ -3934,8 +4353,8 @@ function MyListView({
                   <button
                     type="button"
                     className="mylist-icon-btn"
-                    onClick={() => onEdit(getItemEntry(item))}
-                    title="Edit full entry details"
+                    onClick={() => (item.isFolder && onOpenFolder ? onOpenFolder(item) : onEdit(getItemEntry(item)))}
+                    title={item.isFolder ? "Manage folder collection" : "Edit full entry details"}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -4067,6 +4486,221 @@ function ProfileView({
 }
 
 // ─── Modal Dialogs ───
+
+// ─── Modal: Folder Collection Inspector ───
+
+function FolderModal({
+  item,
+  franchises,
+  onCommitFranchises,
+  onClose,
+  onOpenTracker,
+  onDetail,
+}: {
+  item: UnifiedLibraryItem;
+  franchises: Record<string, UnifiedFranchiseEntry>;
+  onCommitFranchises: (franchises: Record<string, UnifiedFranchiseEntry>) => void;
+  onClose: () => void;
+  onOpenTracker: (item: UnifiedLibraryItem) => void;
+  onDetail: (media: OkamiMedia) => void;
+}) {
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleInput, setTitleInput] = useState(item.title);
+
+  const handleSaveTitle = () => {
+    if (!titleInput.trim()) return;
+    const next = updateFranchiseTitle(franchises, item.id, titleInput.trim());
+    onCommitFranchises(next);
+    setIsEditingTitle(false);
+  };
+
+  const handleToggleStatus = (malId: number, currentStatus: OkamiStatus) => {
+    const nextStatus: OkamiStatus =
+      currentStatus === "completed"
+        ? "watching"
+        : currentStatus === "watching"
+        ? "plan_to_watch"
+        : "completed";
+    const next = updateContainedSeasonStatus(franchises, item.id, malId, nextStatus);
+    onCommitFranchises(next);
+  };
+
+  const handleMarkAllCompleted = () => {
+    let next = { ...franchises };
+    for (const c of item.containedItems) {
+      next = updateContainedSeasonStatus(next, item.id, c.id, "completed");
+    }
+    onCommitFranchises(next);
+  };
+
+  return (
+    <div className="folder-modal-backdrop" onClick={onClose}>
+      <div className="folder-modal-box" onClick={(e) => e.stopPropagation()}>
+        <div className="folder-modal-header">
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="folder-modal-eyebrow">
+              COLLECTION FOLDER • {item.containedItems.length} RELEASES
+            </div>
+            {isEditingTitle ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                <input
+                  className="search-input"
+                  style={{ fontSize: 16, fontWeight: 700, padding: "4px 10px", width: "65%" }}
+                  value={titleInput}
+                  onChange={(e) => setTitleInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSaveTitle();
+                    if (e.key === "Escape") setIsEditingTitle(false);
+                  }}
+                  autoFocus
+                />
+                <button type="button" className="folder-action-btn primary" onClick={handleSaveTitle}>
+                  Save
+                </button>
+                <button type="button" className="folder-action-btn" onClick={() => setIsEditingTitle(false)}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+                <h2 className="folder-modal-title" style={{ margin: 0 }}>
+                  {item.title}
+                </h2>
+                <button
+                  type="button"
+                  className="folder-action-btn"
+                  style={{ fontSize: 10, padding: "2px 8px" }}
+                  onClick={() => setIsEditingTitle(true)}
+                  title="Rename this collection folder"
+                >
+                  Rename
+                </button>
+              </div>
+            )}
+            <div className="folder-modal-stats">
+              <span>
+                Progress: <strong style={{ color: "var(--text-1)" }}>{item.completedCount}/{item.itemCount} Completed</strong>
+              </span>
+              <span>•</span>
+              <span style={{ color: "var(--gold)", fontWeight: 700 }}>
+                ★ {item.averageOfficialScore ? item.averageOfficialScore.toFixed(1) : (item.official_score ? item.official_score.toFixed(1) : "--")} MAL Average
+              </span>
+              <span>•</span>
+              <span>Format: {item.format || (item.type === "manga" ? "Manga" : "TV Series")}</span>
+            </div>
+          </div>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close modal">
+            ✕
+          </button>
+        </div>
+
+        <div className="folder-modal-body">
+          <div
+            style={{
+              marginBottom: 12,
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--text-3)",
+              letterSpacing: 0.8,
+              textTransform: "uppercase",
+            }}
+          >
+            Contained Releases & Chronology ({item.containedItems.length})
+          </div>
+          <div className="folder-contained-list">
+            {item.containedItems.map((c, idx) => {
+              const isDone = c.status === "completed";
+              return (
+                <div key={c.id} className={`folder-contained-card ${isDone ? "completed" : ""}`}>
+                  <img className="folder-contained-thumb" src={c.cover} alt={c.title} />
+                  <div className="folder-contained-info">
+                    <div className="folder-contained-header">
+                      <span className={`folder-season-tag ${idx === 0 ? "s1" : ""}`}>
+                        {c.seasonNumber ? `Part ${c.seasonNumber}` : `Item ${idx + 1}`}
+                      </span>
+                      <span className="type-chip anime" style={{ padding: "1px 6px", fontSize: 9 }}>
+                        {c.format || (c.type === "manga" ? "Manga" : "TV")}
+                      </span>
+                      {c.year ? <span className="mono" style={{ fontSize: 10, color: "var(--text-3)" }}>{c.year}</span> : null}
+                    </div>
+                    <div className="folder-contained-title" title={c.title}>
+                      {c.title}
+                    </div>
+                    <div className="folder-contained-meta">
+                      {c.total ? <span>{c.total} {c.type === "manga" ? "Chapters" : "Episodes"}</span> : <span>Total: ?</span>}
+                      <span>•</span>
+                      <span style={{ color: "var(--gold)", fontWeight: 700 }}>
+                        ★ {c.score && c.score > 0 ? c.score.toFixed(1) : "--"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="folder-contained-actions">
+                    <button
+                      type="button"
+                      className={`folder-action-btn done-btn ${isDone ? "active" : ""}`}
+                      onClick={() => handleToggleStatus(c.id, c.status)}
+                      title="Toggle watch status"
+                    >
+                      {isDone ? "✓ Done" : c.status === "watching" ? "Watching" : "Plan"}
+                    </button>
+                    <Link
+                      href={c.type === "manga" ? `/manga/${c.id}` : `/anime/${c.id}`}
+                      className="folder-action-btn primary"
+                      onClick={onClose}
+                    >
+                      Track →
+                    </Link>
+                    <button
+                      type="button"
+                      className="folder-action-btn"
+                      onClick={() => {
+                        onClose();
+                        onDetail({
+                          id: c.id,
+                          type: c.type,
+                          title: c.title,
+                          cover: c.cover,
+                          format: c.format,
+                          year: c.year || 0,
+                          genres: [],
+                          official_score: c.score,
+                          total: c.total ?? null,
+                        });
+                      }}
+                    >
+                      Info
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="folder-modal-footer">
+          <button type="button" className="folder-action-btn" onClick={handleMarkAllCompleted}>
+            ✓ Mark All Completed
+          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              className="folder-action-btn primary"
+              onClick={() => {
+                onClose();
+                onOpenTracker(item);
+              }}
+            >
+              Open Active Tracker
+            </button>
+            <button type="button" className="folder-action-btn" onClick={onClose}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function AddEntryModal({
   state,
@@ -5338,10 +5972,11 @@ export default function Home() {
   const [activeNav, setActiveNav] = useState("Library");
   const [activeTab, setActiveTab] = useState("Anime");
   const [activeView, setActiveView] = useState<"grid" | "list">("grid");
-  const [activeType, setActiveType] = useState<"all" | "anime" | "manga" | "films">("all");
+  const [activeType, setActiveType] = useState<"all" | "anime" | "manga" | "films" | "folders">("all");
   const [activeGenre, setActiveGenre] = useState("");
   const [activeStatus, setActiveStatus] = useState<OkamiStatus | "favorites" | "">("");
   const [sortBy, setSortBy] = useState<(typeof sortOptions)[number]>("Last Updated");
+  const [openFolderItem, setOpenFolderItem] = useState<UnifiedLibraryItem | null>(null);
 
   const [entries, setEntries] = useState<OkamiEntry[]>(() => loadEntries());
   const [franchises, setFranchises] = useState<Record<string, UnifiedFranchiseEntry>>(() => {
@@ -5828,6 +6463,7 @@ export default function Home() {
                   onExplore={() => setActiveNav("Explore")}
                   onClearFilters={clearLibraryFilters}
                   onOpenTracker={openTracker}
+                  onOpenFolder={setOpenFolderItem}
                 />
               ) : null}
               {activeNav === "Explore" ? (
@@ -5851,6 +6487,7 @@ export default function Home() {
                   onCommitEntries={commitEntries}
                   onCommitFranchises={commitFranchises}
                   onOpenTracker={openTracker}
+                  onOpenFolder={setOpenFolderItem}
                   onExplore={() => setActiveNav("Explore")}
                 />
               ) : null}
@@ -5880,6 +6517,21 @@ export default function Home() {
       ) : null}
       {logProgressOpen ? (
         <LogProgressModal entries={entries} onCommit={commitEntries} onClose={() => setLogProgressOpen(false)} />
+      ) : null}
+      {openFolderItem ? (
+        <FolderModal
+          item={openFolderItem}
+          franchises={franchises}
+          onCommitFranchises={(updated) => {
+            commitFranchises(updated);
+            const freshUnified = buildUnifiedLibraryItems(updated, entries);
+            const found = freshUnified.find((u) => u.id === openFolderItem.id);
+            if (found) setOpenFolderItem(found);
+          }}
+          onClose={() => setOpenFolderItem(null)}
+          onOpenTracker={openTracker}
+          onDetail={openInfo}
+        />
       ) : null}
       {detailMedia ? (
         <DetailPanel
