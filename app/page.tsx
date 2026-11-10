@@ -232,7 +232,7 @@ interface UnifiedLibraryItem {
   activeMalId: number;
   title: string;
   cover: string;
-  type: "anime" | "manga" | "both";
+  type: "anime" | "manga";
   format: string;
   year: number;
   genres: string[];
@@ -280,21 +280,27 @@ function buildUnifiedLibraryItems(
       Object.keys(franchise.manga.series).forEach((id) => seenRoots.add(`manga:${id}`));
     }
 
+    const isExplicitManga = franchise.franchiseId.startsWith("franchise_manga_");
+    const isExplicitAnime = franchise.franchiseId.startsWith("franchise_anime_");
+    const hasAnime = Boolean(franchise.anime && Object.keys(franchise.anime.seasons || {}).length > 0);
+    const hasManga = Boolean(franchise.manga && Object.keys(franchise.manga.series || {}).length > 0);
+    const resolvedType: "anime" | "manga" = isExplicitManga || displayInfo.mediaType === "manga" || (hasManga && !hasAnime) ? "manga" : "anime";
+
     const activeMalId =
-      displayInfo.mediaType === "manga"
+      resolvedType === "manga"
         ? (displayInfo.activeMangaMalId || franchise.rootMalId)
         : (displayInfo.activeSeasonMalId || franchise.rootMalId);
 
     const matchingEntry = entries.find(
       (e) =>
-        (displayInfo.mediaType === "both" || e.type === displayInfo.mediaType) &&
+        e.type === resolvedType &&
         (e.id === activeMalId ||
           e.id === franchise.rootMalId ||
           (Array.isArray(franchise.linkedMalIds) && franchise.linkedMalIds.includes(e.id)))
     );
 
     const franchiseSeason =
-      displayInfo.mediaType === "manga"
+      resolvedType === "manga"
         ? (franchise.manga?.series?.[activeMalId] || franchise.manga?.series?.[franchise.rootMalId])
         : (franchise.anime?.seasons?.[activeMalId] || franchise.anime?.seasons?.[franchise.rootMalId]);
 
@@ -343,8 +349,8 @@ function buildUnifiedLibraryItems(
       activeMalId,
       title: franchise.title,
       cover: franchise.coverImage,
-      type: displayInfo.mediaType,
-      format: matchingEntry?.format || (displayInfo.mediaType === "manga" ? "Manga" : "TV Series"),
+      type: resolvedType,
+      format: matchingEntry?.format || (resolvedType === "manga" ? "Manga" : "TV Series"),
       year: matchingEntry?.year || 0,
       genres: franchise.genres?.length ? franchise.genres : matchingEntry?.genres || [],
       official_score: isFolder && averageOfficialScore > 0 ? averageOfficialScore : resolvedOfficialScore,
@@ -668,6 +674,10 @@ function LibraryView({
   const [activeCategory, setActiveCategory] = useState<string>("all");
   const [categories, setCategories] = useState<CustomCategory[]>(() => loadCustomCategories());
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+  const currentHistory = useMemo(() => {
+    const targetType = activeType === "manga" ? "manga" : "anime";
+    return history.filter((h) => h.mediaType === targetType);
+  }, [history, activeType]);
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -711,7 +721,8 @@ function LibraryView({
   };
 
   const displayedItems = useMemo(() => {
-    let result = [...unifiedItems];
+    const targetType: "anime" | "manga" = activeType === "manga" ? "manga" : "anime";
+    let result = unifiedItems.filter((item) => item.type === targetType);
 
     // 1. Custom Category filter
     if (activeCategory !== "all") {
@@ -720,41 +731,33 @@ function LibraryView({
       );
     }
 
-    // 2. Type Filter (Tri-State support)
+    // 2. Format / Type Sub-Filter (Tri-State support)
     const hasTypeInclude = Object.values(typeTriState).some((s) => s === "include");
     const hasTypeExclude = Object.values(typeTriState).some((s) => s === "exclude");
     if (hasTypeInclude || hasTypeExclude) {
       result = result.filter((item) => {
-        const itemType = item.type;
-        const isFilm =
-          (item.format?.toLowerCase() || "").includes("film") ||
-          (item.format?.toLowerCase() || "").includes("movie");
+        const fmt = (item.format?.toLowerCase() || "");
+        const isFilm = fmt.includes("film") || fmt.includes("movie");
+        const isTV = fmt.includes("tv");
+        const isNovel = fmt.includes("novel");
+        const isMangaFormat = fmt.includes("manga");
 
-        if (typeTriState["anime"] === "exclude" && (itemType === "anime" || itemType === "both")) return false;
-        if (typeTriState["manga"] === "exclude" && (itemType === "manga" || itemType === "both")) return false;
         if (typeTriState["films"] === "exclude" && isFilm) return false;
+        if (typeTriState["tv"] === "exclude" && isTV) return false;
+        if (typeTriState["novels"] === "exclude" && isNovel) return false;
+        if (typeTriState["manga"] === "exclude" && isMangaFormat) return false;
         if (typeTriState["folders"] === "exclude" && item.isFolder) return false;
 
         if (hasTypeInclude) {
-          if (typeTriState["anime"] === "include" && (itemType === "anime" || itemType === "both")) return true;
-          if (typeTriState["manga"] === "include" && (itemType === "manga" || itemType === "both")) return true;
           if (typeTriState["films"] === "include" && isFilm) return true;
+          if (typeTriState["tv"] === "include" && isTV) return true;
+          if (typeTriState["novels"] === "include" && isNovel) return true;
+          if (typeTriState["manga"] === "include" && isMangaFormat) return true;
           if (typeTriState["folders"] === "include" && item.isFolder) return true;
           return false;
         }
         return true;
       });
-    } else if (activeType !== "all") {
-      if (activeType === "films") {
-        result = result.filter((item) => {
-          const fmt = item.format?.toLowerCase?.() ?? "";
-          return fmt.includes("film") || fmt.includes("movie");
-        });
-      } else if (activeType === "folders") {
-        result = result.filter((item) => item.isFolder);
-      } else {
-        result = result.filter((item) => item.type === activeType || item.type === "both");
-      }
     }
 
     // 3. Status Filter (Tri-State support)
@@ -911,32 +914,59 @@ function LibraryView({
         <div className="page-sub">Your personal anime &amp; manga franchise vault</div>
       </div>
 
-      {/* ── Mihon-Inspired Statistics Summary Cards ── */}
+      {/* ── Statistics Summary Cards (Strictly Scoped to Active Media) ── */}
       <div className="stats-summary-grid">
-        <div className="stats-summary-card stats-anime">
-          <span className="stats-card-label">Episodes Watched</span>
-          <span className="stats-card-value">{stats.totalEpisodes.toLocaleString()}</span>
-          <span className="stats-card-sub">≈ {stats.daysWatched} Days Total</span>
-        </div>
-        <div className="stats-summary-card stats-manga">
-          <span className="stats-card-label">Chapters Read</span>
-          <span className="stats-card-value">{stats.totalChapters.toLocaleString()}</span>
-          <span className="stats-card-sub">{stats.totalVolumes} Volumes Tracked</span>
-        </div>
-        <div className="stats-summary-card">
-          <span className="stats-card-label">Mean Rating</span>
-          <span className="stats-card-value">{stats.meanScore > 0 ? stats.meanScore.toFixed(1) : "--"}</span>
-          <span className="stats-card-sub">Across All Tracks</span>
-        </div>
-        <div className="stats-summary-card">
-          <span className="stats-card-label">Completed Titles</span>
-          <span className="stats-card-value">{stats.completedAnime + stats.completedManga}</span>
-          <span className="stats-card-sub">{stats.completedAnime} Anime • {stats.completedManga} Manga</span>
-        </div>
+        {activeType === "manga" ? (
+          <>
+            <div className="stats-summary-card stats-manga">
+              <span className="stats-card-label">Chapters Read</span>
+              <span className="stats-card-value">{stats.totalChapters.toLocaleString()}</span>
+              <span className="stats-card-sub">{stats.totalVolumes} Volumes Tracked</span>
+            </div>
+            <div className="stats-summary-card stats-manga">
+              <span className="stats-card-label">Completed Manga</span>
+              <span className="stats-card-value">{stats.completedManga}</span>
+              <span className="stats-card-sub">Volumes Finished</span>
+            </div>
+            <div className="stats-summary-card">
+              <span className="stats-card-label">Mean Rating</span>
+              <span className="stats-card-value">{stats.meanScore > 0 ? stats.meanScore.toFixed(1) : "--"}</span>
+              <span className="stats-card-sub">Across Manga Vault</span>
+            </div>
+            <div className="stats-summary-card">
+              <span className="stats-card-label">Active Series</span>
+              <span className="stats-card-value">{displayedItems.length}</span>
+              <span className="stats-card-sub">Manga Tracked</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="stats-summary-card stats-anime">
+              <span className="stats-card-label">Episodes Watched</span>
+              <span className="stats-card-value">{stats.totalEpisodes.toLocaleString()}</span>
+              <span className="stats-card-sub">≈ {stats.daysWatched} Days Total</span>
+            </div>
+            <div className="stats-summary-card stats-anime">
+              <span className="stats-card-label">Completed Anime</span>
+              <span className="stats-card-value">{stats.completedAnime}</span>
+              <span className="stats-card-sub">Series Finished</span>
+            </div>
+            <div className="stats-summary-card">
+              <span className="stats-card-label">Mean Rating</span>
+              <span className="stats-card-value">{stats.meanScore > 0 ? stats.meanScore.toFixed(1) : "--"}</span>
+              <span className="stats-card-sub">Across Anime Vault</span>
+            </div>
+            <div className="stats-summary-card">
+              <span className="stats-card-label">Active Series</span>
+              <span className="stats-card-value">{displayedItems.length}</span>
+              <span className="stats-card-sub">Anime Tracked</span>
+            </div>
+          </>
+        )}
       </div>
 
-      {/* ── Recently Watched / Read Activity Shelf ── */}
-      {history.length > 0 && (
+      {/* ── Recently Watched / Read Activity Shelf (Strictly Scoped to Active Media) ── */}
+      {currentHistory.length > 0 && (
         <section className="recent-activity-section">
           <div className="recent-activity-header">
             <div className="recent-activity-title">
@@ -944,7 +974,7 @@ function LibraryView({
                 <circle cx="12" cy="12" r="10" />
                 <polyline points="12 6 12 12 16 14" />
               </svg>
-              <span>Recent Activity / 最近の履歴</span>
+              <span>{activeType === "manga" ? "Recent Manga Activity / 最近の履歴" : "Recent Anime Activity / 最近の履歴"}</span>
             </div>
             <button
               type="button"
@@ -956,7 +986,7 @@ function LibraryView({
             </button>
           </div>
           <div className="recent-activity-strip">
-            {history.slice(0, 4).map((h) => (
+            {currentHistory.slice(0, 4).map((h) => (
               <div
                 key={h.id}
                 className="recent-activity-card"
@@ -1034,18 +1064,25 @@ function LibraryView({
 
         <div className="filter-divider" />
 
-        {/* Media Type Tri-State */}
+        {/* Media Format Tri-State */}
         <div className="filter-section" style={{ gap: "6px" }}>
-          <span className="filter-label">Type</span>
-          {[
-            { label: "Anime", value: "anime" },
-            { label: "Manga", value: "manga" },
-            { label: "Films", value: "films" },
-          ].map((item) => (
+          <span className="filter-label">Format</span>
+          {(activeType === "manga"
+            ? [
+                { label: "Manga", value: "manga" },
+                { label: "Light Novels", value: "novels" },
+                { label: "Folders", value: "folders" },
+              ]
+            : [
+                { label: "TV Series", value: "tv" },
+                { label: "Films / Movies", value: "films" },
+                { label: "Folders", value: "folders" },
+              ]
+          ).map((item) => (
             <TriStateFilterChip
               key={item.value}
               label={item.label}
-              variant={item.value === "manga" ? "manga" : item.value === "anime" ? "anime" : undefined}
+              variant={activeType === "manga" ? "manga" : "anime"}
               state={typeTriState[item.value] || "neutral"}
               onClick={() => {
                 setTypeTriState((prev) => ({

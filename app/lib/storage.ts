@@ -231,6 +231,10 @@ export const TrackManager = {
     let totalVolumes = 0;
     let scoreSum = 0;
     let scoreCount = 0;
+    let animeScoreSum = 0;
+    let animeScoreCount = 0;
+    let mangaScoreSum = 0;
+    let mangaScoreCount = 0;
     let completedAnime = 0;
     let completedManga = 0;
 
@@ -241,6 +245,8 @@ export const TrackManager = {
           if (season.score && season.score > 0) {
             scoreSum += season.score;
             scoreCount++;
+            animeScoreSum += season.score;
+            animeScoreCount++;
           }
           if (season.status === "COMPLETED") {
             completedAnime++;
@@ -254,6 +260,8 @@ export const TrackManager = {
           if (series.score && series.score > 0) {
             scoreSum += series.score;
             scoreCount++;
+            mangaScoreSum += series.score;
+            mangaScoreCount++;
           }
           if (series.status === "COMPLETED") {
             completedManga++;
@@ -264,12 +272,16 @@ export const TrackManager = {
 
     const daysWatched = parseFloat((totalEpisodes / 60).toFixed(1));
     const meanScore = scoreCount > 0 ? parseFloat((scoreSum / scoreCount).toFixed(2)) : 0;
+    const animeMeanScore = animeScoreCount > 0 ? parseFloat((animeScoreSum / animeScoreCount).toFixed(2)) : 0;
+    const mangaMeanScore = mangaScoreCount > 0 ? parseFloat((mangaScoreSum / mangaScoreCount).toFixed(2)) : 0;
 
     return {
       totalEpisodes,
       totalChapters,
       totalVolumes,
       meanScore,
+      animeMeanScore,
+      mangaMeanScore,
       daysWatched,
       completedAnime,
       completedManga,
