@@ -20,3 +20,4 @@ export function Toast({ toast }: { toast: ToastData | null }) {
     </div>
   );
 }
+

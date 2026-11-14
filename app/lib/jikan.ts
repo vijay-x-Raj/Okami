@@ -1,4 +1,5 @@
 export type MediaType = "anime" | "manga";
+export type { OkamiEntry } from "./storage";
 
 export type OkamiMedia = {
   id: number;

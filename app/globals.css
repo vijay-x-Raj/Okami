@@ -575,6 +575,12 @@ img { display: block; max-width: 100%; }
 }
 
 /* Interactive <select> Dropdown Variant - Pure dark mode, zero browser white bleed */
+select {
+  color-scheme: dark !important;
+  background-color: var(--surface-2);
+  color: var(--text-1);
+}
+
 select.status-chip,
 .status-chip.status-select {
   -webkit-appearance: none !important;
@@ -672,24 +678,18 @@ select.status-chip option,
   padding: 8px 12px;
 }
 
-/* noise overlay */
+/* noise overlay (disabled to eliminate speckled weird pattern) */
 body::after {
-  content: ""; position: fixed; inset: 0; pointer-events: none;
-  opacity: 0.03; z-index: 9999;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-size: 200px;
+  display: none !important;
 }
 
-/* page kanji watermark */
+/* page kanji watermark (disabled to eliminate faint artifact behind list/reading views) */
 .content-area-bg::before {
-  content: "本棚"; position: fixed; right: 40px; bottom: 40px;
-  font-size: 200px; color: rgba(255, 255, 255, 0.015);
-  font-family: serif; pointer-events: none; z-index: 0;
-  line-height: 1;
+  display: none !important;
 }
-.content-area-bg.explore::before { content: "探"; }
-.content-area-bg.list::before { content: "一覧"; }
-.content-area-bg.profile::before { content: "記録"; }
+.content-area-bg.explore::before { display: none !important; }
+.content-area-bg.list::before { display: none !important; }
+.content-area-bg.profile::before { display: none !important; }
 
 /* explore */
 .section-header { display: flex; align-items: center; justify-content: space-between; margin: var(--space-4) 0 var(--space-2); }
@@ -2855,6 +2855,51 @@ body::after {
   color: #FFFFFF;
 }
 .theme-manga .trending-badge-viral {
+  background: var(--manga-accent) !important;
+  color: #FFFFFF !important;
+}
+
+/* All Explore colors shift completely in Manga mode */
+.theme-manga .explore-view .type-chip,
+.theme-manga.explore-view .type-chip,
+.theme-manga .explore-grid .type-chip {
+  background: var(--manga-accent-dim) !important;
+  color: var(--manga-accent-light) !important;
+  border-color: var(--manga-border-hi) !important;
+}
+.theme-manga .explore-view .score-badge:not(.gold),
+.theme-manga.explore-view .score-badge:not(.gold) {
+  background: var(--manga-accent) !important;
+  color: #FFFFFF !important;
+}
+.theme-manga .explore-view .hero-btn,
+.theme-manga.explore-view .hero-btn {
+  background: var(--manga-accent) !important;
+  color: #FFFFFF !important;
+  font-weight: 700;
+}
+.theme-manga .explore-view .hero-btn:hover,
+.theme-manga.explore-view .hero-btn:hover {
+  background: var(--manga-accent-hover) !important;
+}
+.theme-manga .explore-view .card-action-btn.primary,
+.theme-manga.explore-view .card-action-btn.primary {
+  background: var(--manga-accent) !important;
+  border-color: var(--manga-accent) !important;
+  color: #FFFFFF !important;
+  font-weight: 700;
+}
+.theme-manga .explore-view .card-action-btn.primary:hover,
+.theme-manga.explore-view .card-action-btn.primary:hover {
+  background: var(--manga-accent-hover) !important;
+  border-color: var(--manga-accent-hover) !important;
+}
+.theme-manga .explore-view .batch-btn.primary {
+  background: var(--manga-accent) !important;
+  color: #FFFFFF !important;
+  font-weight: 700;
+}
+.theme-manga .explore-view .batch-badge {
   background: var(--manga-accent) !important;
   color: #FFFFFF !important;
 }
