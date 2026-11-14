@@ -46,6 +46,9 @@ import {
   importFromMAL,
   importFromAniList,
 } from "./lib/storage";
+import { Toast, type ToastData } from "./components/Toast";
+import { ProfileView } from "./components/ProfileView";
+import { LogProgressModal } from "./components/LogProgressModal";
 
 const navItems = [
   {
@@ -920,22 +923,22 @@ function LibraryView({
           <>
             <div className="stats-summary-card stats-manga">
               <span className="stats-card-label">Chapters Read</span>
-              <span className="stats-card-value">{stats.totalChapters.toLocaleString()}</span>
+              <span className="stats-card-value" suppressHydrationWarning>{stats.totalChapters.toLocaleString()}</span>
               <span className="stats-card-sub">{stats.totalVolumes} Volumes Tracked</span>
             </div>
             <div className="stats-summary-card stats-manga">
               <span className="stats-card-label">Completed Manga</span>
-              <span className="stats-card-value">{stats.completedManga}</span>
+              <span className="stats-card-value" suppressHydrationWarning>{stats.completedManga}</span>
               <span className="stats-card-sub">Volumes Finished</span>
             </div>
             <div className="stats-summary-card">
               <span className="stats-card-label">Mean Rating</span>
-              <span className="stats-card-value">{stats.meanScore > 0 ? stats.meanScore.toFixed(1) : "--"}</span>
+              <span className="stats-card-value" suppressHydrationWarning>{stats.meanScore > 0 ? stats.meanScore.toFixed(1) : "--"}</span>
               <span className="stats-card-sub">Across Manga Vault</span>
             </div>
             <div className="stats-summary-card">
               <span className="stats-card-label">Active Series</span>
-              <span className="stats-card-value">{displayedItems.length}</span>
+              <span className="stats-card-value" suppressHydrationWarning>{displayedItems.length}</span>
               <span className="stats-card-sub">Manga Tracked</span>
             </div>
           </>
@@ -943,22 +946,22 @@ function LibraryView({
           <>
             <div className="stats-summary-card stats-anime">
               <span className="stats-card-label">Episodes Watched</span>
-              <span className="stats-card-value">{stats.totalEpisodes.toLocaleString()}</span>
+              <span className="stats-card-value" suppressHydrationWarning>{stats.totalEpisodes.toLocaleString()}</span>
               <span className="stats-card-sub">≈ {stats.daysWatched} Days Total</span>
             </div>
             <div className="stats-summary-card stats-anime">
               <span className="stats-card-label">Completed Anime</span>
-              <span className="stats-card-value">{stats.completedAnime}</span>
+              <span className="stats-card-value" suppressHydrationWarning>{stats.completedAnime}</span>
               <span className="stats-card-sub">Series Finished</span>
             </div>
             <div className="stats-summary-card">
               <span className="stats-card-label">Mean Rating</span>
-              <span className="stats-card-value">{stats.meanScore > 0 ? stats.meanScore.toFixed(1) : "--"}</span>
+              <span className="stats-card-value" suppressHydrationWarning>{stats.meanScore > 0 ? stats.meanScore.toFixed(1) : "--"}</span>
               <span className="stats-card-sub">Across Anime Vault</span>
             </div>
             <div className="stats-summary-card">
               <span className="stats-card-label">Active Series</span>
-              <span className="stats-card-value">{displayedItems.length}</span>
+              <span className="stats-card-value" suppressHydrationWarning>{displayedItems.length}</span>
               <span className="stats-card-sub">Anime Tracked</span>
             </div>
           </>
@@ -4498,102 +4501,7 @@ function MyListView({
   );
 }
 
-// ─── 4. Profile & Data Management View ───
-
-function ProfileView({
-  profileStats,
-  favourites,
-  onExport,
-  onImport,
-  onImportMAL,
-  onImportAniList,
-  onClear,
-}: {
-  profileStats: Array<{ label: string; value: string }>;
-  favourites: OkamiEntry[];
-  onExport: () => void;
-  onImport: () => void;
-  onImportMAL?: () => void;
-  onImportAniList?: () => void;
-  onClear: () => void;
-}) {
-  return (
-    <>
-      <div className="page-header">
-        <div className="page-title-row">
-          <span className="page-title-kanji">記録</span>
-          <span className="page-title-slash">/</span>
-          <span className="page-title">PROFILE</span>
-        </div>
-        <div className="page-sub">Analytics, backups, and vault controls</div>
-      </div>
-
-      <div className="profile-grid">
-        <div className="profile-card">
-          <div className="profile-header">
-            <div className="profile-avatar">ŌK</div>
-            <div>
-              <div className="profile-name">Okami Master</div>
-              <div className="profile-join">Tracking Vault • Active</div>
-            </div>
-          </div>
-          <div className="profile-stats">
-            {profileStats.map((stat) => (
-              <div className="profile-stat" key={stat.label}>
-                <span className="profile-stat-value">{stat.value}</span>
-                <span className="profile-stat-label">{stat.label}</span>
-              </div>
-            ))}
-          </div>
-          <div className="section-header">
-            <span className="section-title">Favourite Titles</span>
-          </div>
-          <div className="favourite-row">
-            {favourites.length === 0 ? (
-              <div className="empty-inline">No favourites marked yet. Star titles from Library or My List.</div>
-            ) : (
-              favourites.slice(0, 6).map((entry) => (
-                <div className="favourite-card" key={entryKey(entry)}>
-                  <Link href={entry.type === "anime" ? `/anime/${entry.id}` : `/manga/${entry.id}`}>
-                    <img className="favourite-cover" src={entry.cover} alt={entry.title} />
-                  </Link>
-                  <span className="favourite-title">{entry.title}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="profile-card settings-card">
-          <div className="section-header">
-            <span className="section-title">Vault Data Management (Mihon Port)</span>
-          </div>
-          <div className="settings-list">
-            <button className="settings-btn" type="button" onClick={onExport}>
-              Export Vault Backup (JSON v3)
-            </button>
-            <button className="settings-btn" type="button" onClick={onImport}>
-              Import Vault Backup (JSON)
-            </button>
-            {onImportMAL && (
-              <button className="settings-btn" type="button" onClick={onImportMAL}>
-                Import from MyAnimeList (XML / JSON)
-              </button>
-            )}
-            {onImportAniList && (
-              <button className="settings-btn" type="button" onClick={onImportAniList}>
-                Import from AniList (JSON)
-              </button>
-            )}
-            <button className="settings-btn danger" type="button" onClick={onClear}>
-              Clear All Vault Data
-            </button>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
+// ─── 4. Profile & Data Management View (Imported from components/ProfileView) ───
 
 // ─── Modal Dialogs ───
 
@@ -5221,139 +5129,7 @@ function AddEntryModal({
   );
 }
 
-function LogProgressModal({
-  entries,
-  onCommit,
-  onClose,
-}: {
-  entries: OkamiEntry[];
-  onCommit: (next: OkamiEntry[]) => void;
-  onClose: () => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<OkamiEntry | null>(null);
-  const [progress, setProgress] = useState("");
-
-  const filtered = useMemo(() => {
-    return entries.filter(
-      (e) =>
-        e.title.toLowerCase().includes(query.toLowerCase()) &&
-        (e.status === "watching" || e.status === "plan_to_watch")
-    );
-  }, [entries, query]);
-
-  const handleSelect = (entry: OkamiEntry) => {
-    setSelected(entry);
-    setProgress(String(entry.progress + 1));
-  };
-
-  const handleSave = () => {
-    if (!selected) return;
-    const val = Number(progress);
-    if (!Number.isFinite(val) || val < 0) return;
-
-    const maxTotal = selected.total && selected.total > 0 ? selected.total : Infinity;
-    const clamped = Math.min(val, maxTotal);
-    const isCompleted = selected.total && clamped >= selected.total;
-
-    onCommit(
-      updateEntry(entries, selected.id, selected.type, {
-        progress: clamped,
-        status: isCompleted ? "completed" : "watching",
-      })
-    );
-    onClose();
-  };
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <span className="modal-title">Log Reading / Watching Progress</span>
-          <button className="modal-close" type="button" onClick={onClose}>
-            ✕
-          </button>
-        </div>
-
-        <input
-          className="search-input"
-          style={{ width: "100%", marginBottom: 12 }}
-          placeholder="Filter your active titles..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          autoFocus
-        />
-
-        <div className="log-list custom-scroll" style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
-          {filtered.length === 0 ? (
-            <div className="detail-empty">No active titles found.</div>
-          ) : (
-            filtered.map((item) => (
-              <div
-                key={entryKey(item)}
-                onClick={() => handleSelect(item)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: 8,
-                  borderRadius: 4,
-                  background: selected?.id === item.id && selected.type === item.type ? "var(--surface-3)" : "var(--surface-2)",
-                  border: `1px solid ${selected?.id === item.id && selected.type === item.type ? "var(--accent)" : "var(--border)"}`,
-                  cursor: "pointer",
-                }}
-              >
-                <img src={item.cover} alt={item.title} style={{ width: 36, height: 48, objectFit: "cover", borderRadius: 2 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{item.title}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>
-                    {item.type === "manga" ? "Ch." : "Ep."} {item.progress} / {item.total ?? "?"}
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {selected && (
-          <div style={{ marginTop: 16 }}>
-            <label className="info-label" style={{ display: "block", marginBottom: 6 }}>
-              New Progress ({selected.type === "manga" ? "Chapters" : "Episodes"})
-            </label>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input
-                className="inline-input"
-                type="number"
-                min={0}
-                max={selected.total ?? 99999}
-                value={progress}
-                onChange={(e) => setProgress(e.target.value)}
-                style={{ width: 100, fontSize: 14 }}
-              />
-              <span style={{ fontSize: 12, color: "var(--text-2)" }}>
-                / {selected.total ?? "ongoing"}
-              </span>
-            </div>
-          </div>
-        )}
-
-        <div className="modal-actions" style={{ marginTop: 20 }}>
-          <button className="modal-btn ghost" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="modal-btn primary"
-            type="button"
-            onClick={handleSave}
-            disabled={!selected}
-          >
-            Save Progress
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// ─── Modal: Log Progress (Imported from components/LogProgressModal) ───
 
 function DetailPanel({
   media,
@@ -5725,6 +5501,16 @@ export default function Home() {
     setFranchises(next);
   }, []);
 
+  const [toastMessage, setToastMessage] = useState<ToastData | null>(null);
+
+  const showToast = useCallback((text: string, type: "info" | "success" | "warning" = "success") => {
+    const id = Date.now();
+    setToastMessage({ id, text, type });
+    setTimeout(() => {
+      setToastMessage((prev) => (prev?.id === id ? null : prev));
+    }, 2800);
+  }, []);
+
   const handleQuickIncrement = useCallback(
     (item: UnifiedLibraryItem) => {
       if (item.franchise) {
@@ -5733,10 +5519,12 @@ export default function Home() {
           const mangaId = item.activeMalId;
           const nextFranchises = incrementChapter(franchises, fId, mangaId);
           commitFranchises(nextFranchises);
+          showToast(`+1 Chapter: ${item.title}`);
         } else {
           const seasonId = item.activeMalId;
           const nextFranchises = incrementEpisode(franchises, fId, seasonId);
           commitFranchises(nextFranchises);
+          showToast(`+1 Episode: ${item.title}`);
         }
       }
 
@@ -5751,15 +5539,37 @@ export default function Home() {
             status: nextStat,
           })
         );
+        showToast(`+1 Progress: ${e.title}`);
       }
     },
-    [franchises, entries, commitFranchises, commitEntries]
+    [franchises, entries, commitFranchises, commitEntries, showToast]
   );
 
   const [modalState, setModalState] = useState<{ media: OkamiMedia; entry?: OkamiEntry } | null>(null);
   const [detailMedia, setDetailMedia] = useState<OkamiMedia | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [logProgressOpen, setLogProgressOpen] = useState(false);
+
+  // Global Keyboard Shortcuts (/ to search, Escape to dismiss dialogs)
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (modalState) setModalState(null);
+        else if (detailMedia) setDetailMedia(null);
+        else if (openFolderItem) setOpenFolderItem(null);
+        else if (logProgressOpen) setLogProgressOpen(false);
+      } else if (e.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement)?.tagName)) {
+        e.preventDefault();
+        const searchInput = document.querySelector<HTMLInputElement>(".search-input, .mylist-search-input");
+        if (searchInput) {
+          searchInput.focus();
+          searchInput.select();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [modalState, detailMedia, openFolderItem, logProgressOpen]);
 
   const entryMap = useMemo(() => new Map(entries.map((entry) => [entryKey(entry), entry])), [entries]);
 
@@ -5943,14 +5753,17 @@ export default function Home() {
     });
 
     setModalState(null);
+    showToast(entry ? `Updated "${media.title}"` : `Added "${media.title}" to Library`);
   };
 
   const handleRemoveEntry = (entry: OkamiEntry) => {
     commitEntries(removeEntry(entries, entry.id, entry.type));
+    showToast(`Removed "${entry.title}" from Library`, "info");
   };
 
   const handleToggleFavourite = (entry: OkamiEntry) => {
     commitEntries(toggleFavourite(entries, entry.id, entry.type));
+    showToast(entry.is_favourite ? `Removed from favourites` : `Added "${entry.title}" to favourites`);
   };
 
   const openDetailById = async (type: MediaType, id: number) => {
@@ -6264,6 +6077,7 @@ export default function Home() {
           onAddRelated={openAddById}
         />
       ) : null}
+      <Toast toast={toastMessage} />
     </div>
   );
 }

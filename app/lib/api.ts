@@ -35,12 +35,55 @@ const _clientCache = new Map<string, ClientCacheItem<unknown>>();
 const _inFlight = new Map<string, Promise<unknown>>();
 const CLIENT_DEFAULT_TTL = 20 * 60 * 1000; // 20 minutes
 
+function getBaseUrl(): string {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+}
+
+function readSessionCache<T>(key: string, ttlMs: number): T | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(`okami_cache_${key}`);
+    if (!raw) return null;
+    const item = JSON.parse(raw);
+    if (Date.now() - item.timestamp < ttlMs) {
+      return item.data as T;
+    }
+    window.sessionStorage.removeItem(`okami_cache_${key}`);
+  } catch {
+    // ignore sessionStorage errors
+  }
+  return null;
+}
+
+function writeSessionCache<T>(key: string, data: T): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      `okami_cache_${key}`,
+      JSON.stringify({ data, timestamp: Date.now() })
+    );
+  } catch {
+    // ignore quota errors
+  }
+}
+
 async function getJson<T>(input: RequestInfo | URL, init?: RequestInit, ttlMs: number = CLIENT_DEFAULT_TTL): Promise<T> {
   const key = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
 
+  // L1 In-Memory Cache
   const cached = _clientCache.get(key);
   if (cached && Date.now() - cached.timestamp < ttlMs) {
     return cached.data as T;
+  }
+
+  // L2 SessionStorage Cache (preserves data across page reloads & detail opens)
+  const sessionCached = readSessionCache<T>(key, ttlMs);
+  if (sessionCached) {
+    _clientCache.set(key, { data: sessionCached, timestamp: Date.now() });
+    return sessionCached;
   }
 
   const inFlightPromise = _inFlight.get(key);
@@ -62,6 +105,7 @@ async function getJson<T>(input: RequestInfo | URL, init?: RequestInit, ttlMs: n
       }
       const data = (await response.json()) as T;
       _clientCache.set(key, { data, timestamp: Date.now() });
+      writeSessionCache(key, data);
       return data;
     } finally {
       _inFlight.delete(key);
@@ -94,7 +138,7 @@ export async function searchMedia(
     signal?: AbortSignal;
   }
 ): Promise<{ data: OkamiMedia[]; pagination?: { last_visible_page: number; has_next_page: boolean; total?: number } }> {
-  const url = new URL("/api/jikan/search", window.location.origin);
+  const url = new URL("/api/jikan/search", getBaseUrl());
   url.searchParams.set("type", type);
   if (query) url.searchParams.set("q", query);
   if (options?.genres) url.searchParams.set("genres", options.genres);
@@ -125,7 +169,7 @@ export async function fetchTopDetailed(
   type: MediaType,
   options?: { page?: number; limit?: number; filter?: string }
 ): Promise<{ data: OkamiMedia[]; pagination?: { last_visible_page: number; has_next_page: boolean; total?: number } }> {
-  const url = new URL("/api/jikan/top", window.location.origin);
+  const url = new URL("/api/jikan/top", getBaseUrl());
   url.searchParams.set("type", type);
   if (options?.page) url.searchParams.set("page", String(options.page));
   if (options?.limit) url.searchParams.set("limit", String(options.limit));
@@ -143,7 +187,7 @@ export async function fetchSeasonDetailed(options?: { page?: number; limit?: num
   data: OkamiMedia[];
   pagination?: { last_visible_page: number; has_next_page: boolean; total?: number };
 }> {
-  const url = new URL("/api/jikan/season", window.location.origin);
+  const url = new URL("/api/jikan/season", getBaseUrl());
   if (options?.page) url.searchParams.set("page", String(options.page));
   if (options?.limit) url.searchParams.set("limit", String(options.limit));
   const data = await getJson<{ data: OkamiMedia[]; pagination?: { last_visible_page: number; has_next_page: boolean; total?: number } }>(url);
@@ -151,7 +195,7 @@ export async function fetchSeasonDetailed(options?: { page?: number; limit?: num
 }
 
 export async function fetchDetail(type: MediaType, id: number): Promise<OkamiMedia> {
-  const url = new URL("/api/jikan/detail", window.location.origin);
+  const url = new URL("/api/jikan/detail", getBaseUrl());
   url.searchParams.set("type", type);
   url.searchParams.set("id", String(id));
   const data = await getJson<{ data: OkamiMedia }>(url);
@@ -163,7 +207,7 @@ export async function fetchEpisodes(
   page: number = 1,
   options?: { total?: number; status?: string; forceRefresh?: boolean } | number
 ): Promise<FetchEpisodesResponse> {
-  const url = new URL("/api/jikan/episodes", window.location.origin);
+  const url = new URL("/api/jikan/episodes", getBaseUrl());
   url.searchParams.set("id", String(id));
   url.searchParams.set("page", String(page));
   if (typeof options === "number") {
@@ -189,7 +233,7 @@ export async function fetchVolumes(
   id: number,
   options?: { status?: string; forceRefresh?: boolean }
 ): Promise<MangaVolumeData> {
-  const url = new URL("/api/jikan/volumes", window.location.origin);
+  const url = new URL("/api/jikan/volumes", getBaseUrl());
   url.searchParams.set("id", String(id));
   if (options?.status) url.searchParams.set("status", options.status);
   if (options?.forceRefresh) url.searchParams.set("forceRefresh", "true");
@@ -197,7 +241,7 @@ export async function fetchVolumes(
 }
 
 export async function fetchRelated(type: MediaType, id: number): Promise<JikanRelation[]> {
-  const url = new URL("/api/jikan/related", window.location.origin);
+  const url = new URL("/api/jikan/related", getBaseUrl());
   url.searchParams.set("type", type);
   url.searchParams.set("id", String(id));
   const data = await getJson<{ related: JikanRelation[] }>(url);
@@ -208,7 +252,7 @@ export async function fetchCharacters(
   id: number,
   type: MediaType = "anime"
 ): Promise<JikanCharacter[]> {
-  const url = new URL("/api/jikan/characters", window.location.origin);
+  const url = new URL("/api/jikan/characters", getBaseUrl());
   url.searchParams.set("id", String(id));
   url.searchParams.set("type", type);
   const data = await getJson<{ characters: JikanCharacter[] }>(url);
@@ -219,7 +263,7 @@ export async function fetchFranchiseGraph(
   id: number,
   type: MediaType = "anime"
 ): Promise<FranchiseGraph> {
-  const url = new URL("/api/jikan/franchise", window.location.origin);
+  const url = new URL("/api/jikan/franchise", getBaseUrl());
   url.searchParams.set("id", String(id));
   url.searchParams.set("type", type);
   const data = await getJson<{ data: FranchiseGraph }>(url);

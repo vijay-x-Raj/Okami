@@ -5557,3 +5557,48 @@ body::after {
   flex-shrink: 0;
 }
 
+/* ─── Ultra-sleek tactile floating toast notification ─── */
+.okami-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 28px;
+  z-index: 10000;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-hi);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 11px;
+  color: var(--text-1);
+  letter-spacing: 0.5px;
+  pointer-events: none;
+  animation: toastIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.theme-manga .okami-toast,
+[data-theme="manga"] .okami-toast {
+  border-left-color: var(--manga-accent);
+}
+.okami-toast-icon {
+  font-weight: 700;
+  color: var(--accent);
+}
+.theme-manga .okami-toast-icon,
+[data-theme="manga"] .okami-toast-icon {
+  color: var(--manga-accent-light);
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
