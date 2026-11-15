@@ -47,11 +47,13 @@ export function EntryMenu({
   onEdit,
   onRemove,
   onToggleFavourite,
+  openUp = false,
 }: {
   entry: OkamiEntry;
   onEdit: (entry: OkamiEntry) => void;
   onRemove: (entry: OkamiEntry) => void;
   onToggleFavourite: (entry: OkamiEntry) => void;
+  openUp?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -59,11 +61,17 @@ export function EntryMenu({
 
   return (
     <div className="menu-wrap" ref={ref}>
-      <button className="table-action" type="button" onClick={() => setOpen((prev) => !prev)}>
+      <button
+        className="table-action"
+        type="button"
+        aria-label="Actions menu"
+        title="More actions"
+        onClick={() => setOpen((prev) => !prev)}
+      >
         ⋯
       </button>
       {open ? (
-        <div className="menu">
+        <div className={`menu ${openUp ? "menu-up" : ""}`}>
           <button
             className="menu-item"
             type="button"
@@ -82,13 +90,13 @@ export function EntryMenu({
               setOpen(false);
             }}
           >
-            Toggle Favourite
+            {entry.is_favourite ? "Remove Favourite" : "Add to Favourites"}
           </button>
           <button
             className="menu-item menu-item-danger"
             type="button"
             onClick={() => {
-              if (confirm(`Remove "${entry.title}"?`)) {
+              if (confirm(`Remove "${entry.title}" from library?`)) {
                 onRemove(entry);
               }
               setOpen(false);
@@ -908,31 +916,57 @@ export function LibraryView({
             <span>Cover</span>
             <span>Title</span>
             <span>Type</span>
-            <span>My Score</span>
-            <span>Official</span>
+            <span>Score</span>
+            <span>MAL</span>
             <span>Status</span>
             <span>Progress</span>
             <span>Unplayed</span>
             <span>Quick +1</span>
-            <span>Date Added</span>
-            <span>⋯</span>
+            <span>Added</span>
+            <span>Actions</span>
           </div>
           {displayedItems.map((item, index) => {
             const category = entryCategory(item.type, item.format);
             const isManga = item.type === "manga";
             const unplayedCount = item.unwatchedCount || item.unreadCount || 0;
 
+            const effectiveEntry: OkamiEntry = item.legacyEntry || {
+              id: item.activeMalId || item.rootMalId,
+              type: item.type,
+              title: item.title,
+              cover: item.cover,
+              format: item.format,
+              year: item.year,
+              genres: item.genres,
+              official_score: item.official_score,
+              user_score: item.user_score,
+              status: item.status,
+              progress: item.progressNum,
+              total: item.totalNum,
+              completed_seasons: [],
+              completed_volumes: [],
+              completed_episodes: [],
+              date_added: item.date_added,
+              notes: "",
+              is_favourite: item.is_favourite,
+            };
+
+            const isWatching = item.status === "watching";
+            const isCompleted = item.status === "completed";
+
             return (
               <div
                 key={item.id}
-                className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${item.status === "watching" ? "row-watching" : ""}`}
+                className={`library-row ${index % 2 === 0 ? "row-alt" : ""} ${
+                  isWatching ? "row-watching" : isCompleted ? "row-completed" : ""
+                }`}
               >
                 <span className="mono">{String(index + 1).padStart(2, "0")}</span>
                 {item.isFolder ? (
                   <div
                     role="button"
                     tabIndex={0}
-                    style={{ cursor: "pointer" }}
+                    style={{ cursor: "pointer", display: "flex", justifyContent: "center" }}
                     onClick={() => onOpenFolder(item)}
                     aria-label={`Open folder for ${item.title}`}
                   >
@@ -942,6 +976,7 @@ export function LibraryView({
                   <Link
                     aria-label={`Open details for ${item.title}`}
                     href={isManga ? `/manga/${item.activeMalId}/info` : `/anime/${item.activeMalId}/info`}
+                    style={{ display: "flex", justifyContent: "center" }}
                   >
                     <img className="row-cover" src={item.cover} alt={item.title} />
                   </Link>
@@ -951,41 +986,50 @@ export function LibraryView({
                     className="title-cell"
                     role="button"
                     tabIndex={0}
-                    style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                    style={{ cursor: "pointer" }}
                     onClick={() => onOpenFolder(item)}
+                    title={item.title}
                   >
-                    <span className="folder-badge-tag" style={{ position: "static", display: "inline-block" }}>
+                    <span className="folder-badge-tag" style={{ position: "static", display: "inline-block", flexShrink: 0 }}>
                       FOLDER
                     </span>
-                    <span>{item.title}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>
                   </div>
                 ) : (
                   <Link
                     className="title-cell"
                     href={isManga ? `/manga/${item.activeMalId}/info` : `/anime/${item.activeMalId}/info`}
+                    title={item.title}
                   >
-                    {item.title}
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>
+                    {item.is_favourite ? (
+                      <span style={{ color: "var(--gold, #F59E0B)", fontSize: 11, flexShrink: 0 }} title="Favourite">★</span>
+                    ) : null}
                   </Link>
                 )}
                 <span className={`type-chip ${category.className}`}>
                   {item.isFolder ? "Folder" : category.label}
                 </span>
-                <span className="mono">{item.user_score ?? "--"}</span>
+                <span className="mono">{item.user_score ? item.user_score.toFixed(1) : "--"}</span>
                 <span className="mono" style={{ color: item.isFolder ? "var(--gold)" : undefined }}>
                   {item.isFolder
-                    ? `★ ${item.averageOfficialScore ? item.averageOfficialScore.toFixed(1) : item.official_score.toFixed(1)} Avg`
+                    ? `★ ${item.averageOfficialScore ? item.averageOfficialScore.toFixed(1) : item.official_score.toFixed(1)}`
                     : formatScore(item.official_score)}
                 </span>
                 <span className={`status-chip ${statusClass(item.status)} ${item.type === "manga" ? "manga" : "anime"}`}>
                   {statusLabel(item.status, item.type === "manga")}
                 </span>
-                <span className="mono">
+                <span
+                  className="mono"
+                  style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  title={item.isFolder ? `${item.completedCount}/${item.itemCount} Done` : item.progressLabel}
+                >
                   {item.isFolder ? `${item.completedCount}/${item.itemCount} Done` : item.progressLabel}
                 </span>
                 <span className="mono" style={{ color: unplayedCount > 0 ? "var(--accent)" : "var(--text-3)" }}>
                   {unplayedCount > 0 ? `+${unplayedCount}` : "0"}
                 </span>
-                <div>
+                <div style={{ display: "flex", justifyContent: "center" }}>
                   {item.isFolder ? (
                     <button
                       className="card-action-btn"
@@ -993,7 +1037,7 @@ export function LibraryView({
                       type="button"
                       onClick={() => onOpenFolder(item)}
                     >
-                      Open Folder
+                      Open
                     </button>
                   ) : (
                     <button
@@ -1007,16 +1051,15 @@ export function LibraryView({
                   )}
                 </div>
                 <span className="mono">{item.date_added.slice(0, 10)}</span>
-                {item.legacyEntry ? (
+                <div style={{ display: "flex", justifyContent: "center" }}>
                   <EntryMenu
-                    entry={item.legacyEntry}
+                    entry={effectiveEntry}
                     onEdit={onEdit}
                     onRemove={onRemove}
                     onToggleFavourite={onToggleFavourite}
+                    openUp={index >= displayedItems.length - 2 && displayedItems.length > 2}
                   />
-                ) : (
-                  <span />
-                )}
+                </div>
               </div>
             );
           })}

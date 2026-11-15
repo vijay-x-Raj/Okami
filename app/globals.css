@@ -905,29 +905,185 @@ body::after {
 
 /* library list */
 .library-table {
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;
-  overflow-x: auto; overflow-y: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow-x: auto;
   font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  padding-bottom: 20px;
 }
+
 .library-row {
-  display: grid; align-items: center; gap: 12px;
-  grid-template-columns: 28px 56px 1.6fr 0.5fr 0.6fr 0.6fr 0.7fr 0.9fr 0.8fr 36px;
-  padding: var(--space-2) var(--space-3); font-size: 10px; letter-spacing: 1px; line-height: 1.4;
-  min-width: 720px;
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  grid-template-columns: 32px 48px minmax(180px, 2fr) 72px 64px 64px 110px minmax(130px, 1.2fr) 68px 90px 92px 40px;
+  padding: 8px 14px;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  line-height: 1.4;
+  min-width: 1080px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  box-sizing: border-box;
+  transition: background 0.15s ease;
 }
+
+.library-row:last-child {
+  border-bottom: none;
+}
+
+.library-row:hover:not(.table-header) {
+  background: var(--surface-3);
+}
+
+.library-row.row-alt:not(:hover):not(.table-header) {
+  background: var(--surface-1);
+}
+
+.library-row.row-watching {
+  border-left: 3px solid var(--accent);
+}
+
+.library-row.row-completed {
+  border-left: 3px solid var(--teal, #10B981);
+}
+
+.library-row.table-header {
+  background: var(--surface-1);
+  text-transform: uppercase;
+  color: var(--text-3);
+  letter-spacing: 1px;
+  font-size: 10px;
+  font-weight: 700;
+  border-bottom: 2px solid var(--border);
+  border-left: 3px solid transparent;
+  user-select: none;
+  padding: 10px 14px;
+}
+
+.library-row.table-header span {
+  white-space: nowrap;
+}
+
+/* Explicit cell alignments */
 .library-row > :nth-child(1),
+.library-row > :nth-child(2),
+.library-row > :nth-child(4),
 .library-row > :nth-child(5),
 .library-row > :nth-child(6),
-.library-row > :nth-child(8),
-.library-row > :nth-child(9) { justify-self: end; }
-.table-header { text-transform: uppercase; color: var(--text-3); background: var(--surface-1); letter-spacing: 2px; }
-.row-alt { background: var(--surface-1); }
-.row-watching { border-left: 2px solid var(--accent); }
-.row-cover { width: 40px; height: 56px; object-fit: cover; border-radius: 3px; }
-.title-cell { font-family: var(--font-body, "Nunito", sans-serif); font-weight: 700; font-size: 12px; }
-.mono { font-family: var(--font-mono, "IBM Plex Mono", monospace); }
-.table-action { color: var(--text-2); font-size: 12px; }
-.menu-wrap { position: relative; }
+.library-row > :nth-child(7),
+.library-row > :nth-child(9),
+.library-row > :nth-child(10),
+.library-row > :nth-child(11),
+.library-row > :nth-child(12) {
+  justify-self: center;
+  text-align: center;
+}
+
+.library-row > :nth-child(3),
+.library-row > :nth-child(8) {
+  justify-self: start;
+  text-align: left;
+}
+
+.library-row .row-cover {
+  width: 38px;
+  height: 52px;
+  object-fit: cover;
+  border-radius: 4px;
+  display: block;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s ease;
+}
+
+.library-row:hover .row-cover {
+  transform: scale(1.04);
+}
+
+.library-row .title-cell {
+  font-family: var(--font-body, "Nunito", sans-serif);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-1);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.library-row .title-cell:hover {
+  color: var(--accent);
+}
+
+.library-row .mono {
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+}
+
+.library-row .quick-plus {
+  background: var(--accent);
+  color: #ffffff !important;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.library-row .quick-plus:hover {
+  background: var(--accent-hi, #FF2E63);
+  box-shadow: 0 0 10px var(--accent-glow, rgba(232, 25, 75, 0.3));
+}
+
+.theme-manga .library-row .quick-plus {
+  background: var(--manga-blue, #2563EB);
+  border-color: var(--manga-blue, #2563EB);
+  color: #ffffff !important;
+}
+
+.theme-manga .library-row .quick-plus:hover {
+  background: #3B82F6;
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.4);
+}
+
+.theme-manga .library-row.row-watching {
+  border-left: 3px solid var(--manga-blue, #2563EB);
+}
+
+.table-action {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-2);
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.15s ease;
+}
+
+.table-action:hover {
+  background: var(--surface-3);
+  border-color: var(--border);
+  color: var(--text-1);
+}
+
+.menu-wrap {
+  position: relative;
+}
+
 .menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -936,9 +1092,16 @@ body::after {
   background: var(--surface-3);
   border: 1px solid var(--border-hi);
   border-radius: 4px;
-  z-index: 20;
+  z-index: 50;
   display: grid;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
+
+.menu.menu-up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
 .menu-item {
   padding: 9px 12px;
   font-family: var(--font-mono, "IBM Plex Mono", monospace);
@@ -947,10 +1110,29 @@ body::after {
   text-transform: uppercase;
   color: var(--text-2);
   text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
 }
-.menu-item:hover { background: var(--surface-4); color: var(--text-1); }
-.menu-item-danger { color: var(--accent); }
-.menu-item-active { color: var(--accent); }
+
+.menu-item:hover {
+  background: var(--surface-4);
+  color: var(--text-1);
+}
+
+.menu-item-danger {
+  color: var(--accent);
+}
+
+.menu-item-danger:hover {
+  background: rgba(232, 25, 75, 0.15);
+  color: var(--accent-hi, #FF2E63);
+}
+
+.menu-item-active {
+  color: var(--accent);
+}
 
 /* my list */
 .list-header .entries-badge {
